@@ -1,0 +1,158 @@
+<script>
+/* ============================================================
+   AppAuth — الإعداد الأول، الدخول، التسجيل، التحقق، الاستعادة، الملف الشخصي
+   ============================================================ */
+function authShell(title, sub, body) {
+  return '<div class="auth-wrap"><div class="auth-hero"><img class="logo" src="' + window.IKP_ASSETS.emblem + '" alt="شعار ' + h(SCHOOL) + '"><h1>' + h(title) + '</h1><p class="sub" style="margin-bottom:4px">' + h(sub || '') + '</p><div class="vision">' + h(VISION) + '</div></div><div class="card">' + body + '</div></div>';
+}
+function bindForm(id, onSubmit) {
+  var f = el(id);
+  f.addEventListener('submit', function (e) {
+    e.preventDefault();
+    $$('.field', f).forEach(function (w) { w.classList.remove('invalid'); });
+    var btn = $('button[type=submit]', f);
+    busyBtn(btn, true);
+    Promise.resolve().then(function () { return onSubmit(formData(f), f); }).catch(function (err) {
+      showErr(err);
+    }).then(function () { busyBtn(btn, false); });
+  });
+}
+function pwHint() { return '8 أحرف على الأقل وتتضمن حروفًا وأرقامًا'; }
+
+/* ---------- إعداد المدير الأول ---------- */
+route('#/setup', function () {
+  if (!S.setup || !S.setup.needsAdmin) { go('#/login'); return; }
+  layout(authShell('إعداد المدير الأول', 'خطوة تُنفذ مرة واحدة لتفعيل المنصة',
+    (S.setup.setupTokenActive ? alertBox('info', 'رمز الإعداد مطبوع في سجل التنفيذ بعد تشغيل <b dir="ltr">SETUP_1_initialize</b> من محرر Apps Script. يثبت هذا الرمز ملكية المشروع ولا يُخزن إلا مجزّأً.') : alertBox('warn', 'لا يوجد رمز إعداد مفعّل. افتح محرر Apps Script وشغّل الدالة <b dir="ltr">SETUP_1_initialize</b> (أو <b dir="ltr">SETUP_3_regenerateSetupToken</b>) ثم انسخ الرمز من السجل.')) +
+    '<form id="fSetup" novalidate>' +
+    field({ id: 'sToken', name: 'setupToken', label: 'رمز الإعداد (من سجل Apps Script)', required: true, inputmode: 'numeric', cls: 'ltr', autocomplete: 'one-time-code' }) +
+    field({ id: 'sName', name: 'name', label: 'الاسم الكامل', required: true, autocomplete: 'name' }) +
+    field({ id: 'sEmail', name: 'email', type: 'email', label: 'البريد الإلكتروني', required: true, autocomplete: 'email', hint: 'سيُستخدم لتسجيل الدخول ولاستلام إشعارات الاجتياز' }) +
+    field({ id: 'sJob', name: 'jobTitle', label: 'المسمى الوظيفي', value: 'نائب مدير للشؤون الأكاديمية' }) +
+    field({ id: 'sPass', name: 'password', type: 'password', label: 'كلمة المرور', required: true, autocomplete: 'new-password', hint: pwHint() }) +
+    field({ id: 'sPass2', name: 'password2', type: 'password', label: 'تأكيد كلمة المرور', required: true, autocomplete: 'new-password' }) +
+    '<button class="btn block lg" type="submit">إنشاء حساب المدير وتفعيل المنصة</button></form>'), { title: 'الإعداد الأول' });
+  bindForm('fSetup', function (d) {
+    if (!d.setupToken) { setFieldErr('sToken', 'أدخل رمز الإعداد'); return; }
+    if (d.password !== d.password2) { setFieldErr('sPass2', 'كلمتا المرور غير متطابقتين'); return; }
+    return api('setup.createAdmin', d).then(function (r) { setSession(r.token, r.user); S.setup.needsAdmin = false; toast('تم تفعيل المنصة وإنشاء حساب المدير', 'ok'); return api('auth.me').then(function (me) { S.settings = me.settings; go('#/admin'); }); })
+      .catch(function (e) { if (e.code === 'SETUP_TOKEN') setFieldErr('sToken', e.message); else if (e.code === 'WEAK_PASSWORD') setFieldErr('sPass', e.message); else throw e; });
+  });
+});
+
+/* ---------- تسجيل الدخول ---------- */
+route('#/login', function () {
+  layout(authShell(APP_NAME, SCHOOL,
+    '<h2 style="text-align:center">تسجيل الدخول</h2><form id="fLogin" novalidate>' +
+    field({ id: 'lEmail', name: 'email', type: 'email', label: 'البريد الإلكتروني الرسمي', required: true, autocomplete: 'email', placeholder: 'name@education.qa' }) +
+    field({ id: 'lPass', name: 'password', type: 'password', label: 'كلمة المرور', required: true, autocomplete: 'current-password' }) +
+    '<button class="btn block lg" type="submit">دخول</button></form>' +
+    '<div class="auth-links"><a href="#/forgot">نسيت كلمة المرور؟</a><a href="#/register">إنشاء حساب جديد</a></div>'), { title: 'تسجيل الدخول' });
+  bindForm('fLogin', function (d) {
+    if (!d.email) { setFieldErr('lEmail', 'أدخل البريد الإلكتروني'); return; }
+    if (!d.password) { setFieldErr('lPass', 'أدخل كلمة المرور'); return; }
+    return api('auth.login', d).then(function (r) {
+      if (r.pending) { store('pendingEmail', r.email); toast('الحساب بانتظار التفعيل — أرسلنا رمزًا جديدًا إلى بريدك', 'warn', 5000); go('#/verify'); return; }
+      setSession(r.token, r.user);
+      return api('auth.me').then(function (me) { S.settings = me.settings; var next = store('next'); store('next', null); toast('مرحبًا ' + r.user.name.split(' ')[0], 'ok'); go(next || '#/home'); });
+    }).catch(function (e) { if (e.code === 'AUTH') setFieldErr('lPass', e.message); else throw e; });
+  });
+});
+
+/* ---------- إنشاء حساب ---------- */
+route('#/register', function () {
+  var st = S.settings || { departments: [], jobTitles: [], allowedDomains: ['education.qa', 'edu.gov.qa'] };
+  layout(authShell('إنشاء حساب جديد', 'للمعلمين والكادر المدرسي',
+    alertBox('info', 'التسجيل متاح للبريد الرسمي التابع لوزارة التربية والتعليم والتعليم العالي: ' + st.allowedDomains.map(function (d) { return '<b dir="ltr">@' + h(d) + '</b>'; }).join(' أو ')) +
+    '<form id="fReg" novalidate>' +
+    field({ id: 'rName', name: 'name', label: 'الاسم الكامل (كما سيظهر في الشهادة)', required: true, autocomplete: 'name' }) +
+    field({ id: 'rEmail', name: 'email', type: 'email', label: 'البريد الإلكتروني الرسمي', required: true, autocomplete: 'email', placeholder: 'name@education.qa' }) +
+    field({ id: 'rJob', name: 'jobTitle', type: 'select', label: 'المسمى الوظيفي', required: true, options: [{ value: '', label: '— اختر —' }].concat(st.jobTitles) }) +
+    field({ id: 'rDept', name: 'department', type: 'select', label: 'القسم', required: true, options: [{ value: '', label: '— اختر —' }].concat(st.departments) }) +
+    field({ id: 'rPass', name: 'password', type: 'password', label: 'كلمة المرور', required: true, autocomplete: 'new-password', hint: pwHint() }) +
+    field({ id: 'rPass2', name: 'password2', type: 'password', label: 'تأكيد كلمة المرور', required: true, autocomplete: 'new-password' }) +
+    '<button class="btn block lg" type="submit">إنشاء الحساب</button></form>' +
+    '<div class="auth-links"><a href="#/login">لديك حساب؟ تسجيل الدخول</a></div>'), { title: 'إنشاء حساب' });
+  bindForm('fReg', function (d) {
+    var bad = false;
+    if (d.password !== d.password2) { setFieldErr('rPass2', 'كلمتا المرور غير متطابقتين'); bad = true; }
+    if (!d.department) { setFieldErr('rDept', 'اختر القسم'); bad = true; }
+    if (!d.jobTitle) { setFieldErr('rJob', 'اختر المسمى الوظيفي'); bad = true; }
+    if (!/^\S+@\S+\.\S+$/.test(d.email)) { setFieldErr('rEmail', 'بريد غير صالح'); bad = true; }
+    if (!d.name || d.name.trim().length < 3) { setFieldErr('rName', 'أدخل الاسم الكامل'); bad = true; }
+    if (bad) return;
+    return api('auth.register', d).then(function (r) {
+      store('pendingEmail', r.email);
+      if (!r.mailSent) toast(r.mailError, 'warn', 6000);
+      go('#/verify');
+    }).catch(function (e) { if (e.code === 'DOMAIN' || e.code === 'EXISTS') setFieldErr('rEmail', e.message); else if (e.code === 'WEAK_PASSWORD') setFieldErr('rPass', e.message); else throw e; });
+  });
+});
+
+/* ---------- تفعيل البريد ---------- */
+route('#/verify', function () {
+  var email = store('pendingEmail') || '';
+  layout(authShell('تفعيل الحساب', 'أدخل رمز التفعيل المرسل إلى بريدك',
+    '<form id="fVer" novalidate>' +
+    field({ id: 'vEmail', name: 'email', type: 'email', label: 'البريد الإلكتروني', value: email, required: true, autocomplete: 'email' }) +
+    field({ id: 'vCode', name: 'code', label: 'رمز التفعيل (6 أرقام)', required: true, inputmode: 'numeric', cls: 'code-input', autocomplete: 'one-time-code', maxlength: 6 }) +
+    '<button class="btn block lg" type="submit">تفعيل الحساب</button></form>' +
+    '<div class="auth-links"><button class="btn sm soft" id="btnResend" type="button">إعادة إرسال الرمز</button><a href="#/login">العودة لتسجيل الدخول</a></div>'), { title: 'تفعيل الحساب' });
+  if (email) setTimeout(function () { if (el('vCode')) el('vCode').focus(); }, 50);
+  bindForm('fVer', function (d) {
+    return api('auth.verifyEmail', d).then(function (r) {
+      if (r.token) { setSession(r.token, r.user); store('pendingEmail', null); toast('تم تفعيل حسابك بنجاح — أهلًا بك', 'ok'); return api('auth.me').then(function (me) { S.settings = me.settings; go('#/home'); }); }
+      toast('الحساب مفعّل مسبقًا — سجّل الدخول', 'ok'); go('#/login');
+    }).catch(function (e) { if (/CODE|SUSPENDED/.test(e.code)) setFieldErr('vCode', e.message); else throw e; });
+  });
+  el('btnResend').addEventListener('click', function () {
+    var b = this; if (!el('vEmail').value) { setFieldErr('vEmail', 'أدخل البريد الإلكتروني'); return; } busyBtn(b, true, 'جارٍ الإرسال');
+    api('auth.resendVerify', { email: el('vEmail').value }).then(function (r) { toast(r.message, 'ok', 5000); }).catch(showErr).then(function () { busyBtn(b, false); });
+  });
+});
+
+/* ---------- استعادة كلمة المرور ---------- */
+route('#/forgot', function () {
+  layout(authShell('استعادة كلمة المرور', 'سنرسل رمزًا مؤقتًا إلى بريدك',
+    '<form id="fForgot" novalidate>' + field({ id: 'fgEmail', name: 'email', type: 'email', label: 'البريد الإلكتروني', required: true, autocomplete: 'email' }) +
+    '<button class="btn block lg" type="submit">إرسال رمز الاستعادة</button></form><div class="auth-links"><a href="#/reset">لديك رمز؟ تعيين كلمة مرور جديدة</a><a href="#/login">العودة</a></div>'), { title: 'استعادة كلمة المرور' });
+  bindForm('fForgot', function (d) { if (!d.email) { setFieldErr('fgEmail', 'أدخل البريد الإلكتروني'); return; } return api('auth.forgot', d).then(function (r) { store('pendingEmail', d.email); toast(r.message, 'ok', 6000); go('#/reset'); }); });
+});
+route('#/reset', function () {
+  layout(authShell('تعيين كلمة مرور جديدة', 'الرمز صالح لمدة محدودة ويُستخدم مرة واحدة',
+    '<form id="fReset" novalidate>' + field({ id: 'rsEmail', name: 'email', type: 'email', label: 'البريد الإلكتروني', value: store('pendingEmail') || '', required: true, autocomplete: 'email' }) +
+    field({ id: 'rsCode', name: 'code', label: 'رمز الاستعادة', required: true, inputmode: 'numeric', cls: 'code-input', autocomplete: 'one-time-code', maxlength: 6 }) +
+    field({ id: 'rsPass', name: 'password', type: 'password', label: 'كلمة المرور الجديدة', required: true, autocomplete: 'new-password', hint: pwHint() }) +
+    field({ id: 'rsPass2', name: 'password2', type: 'password', label: 'تأكيد كلمة المرور', required: true, autocomplete: 'new-password' }) +
+    '<button class="btn block lg" type="submit">حفظ كلمة المرور</button></form><div class="auth-links"><a href="#/forgot">طلب رمز جديد</a><a href="#/login">العودة</a></div>'), { title: 'تعيين كلمة مرور' });
+  bindForm('fReset', function (d) {
+    if (d.password !== d.password2) { setFieldErr('rsPass2', 'كلمتا المرور غير متطابقتين'); return; }
+    return api('auth.reset', d).then(function () { store('pendingEmail', null); toast('تم تعيين كلمة المرور. سجّل الدخول الآن', 'ok', 5000); go('#/login'); })
+      .catch(function (e) { if (/CODE/.test(e.code)) setFieldErr('rsCode', e.message); else if (e.code === 'WEAK_PASSWORD') setFieldErr('rsPass', e.message); else throw e; });
+  });
+});
+
+/* ---------- الملف الشخصي ---------- */
+route('#/profile', function () {
+  var u = S.user, st = S.settings;
+  layout('<h1>حسابي</h1><p class="sub">تعديل بياناتك الشخصية وكلمة المرور</p><div class="grid c2" style="align-items:start">' +
+    '<div class="card"><h2>البيانات الشخصية</h2><form id="fProf" novalidate>' +
+    field({ id: 'pName', name: 'name', label: 'الاسم الكامل (كما يظهر في الشهادات الجديدة)', value: u.name, required: true }) +
+    '<div class="field"><label for="pEmail">البريد الإلكتروني</label><input id="pEmail" type="email" value="' + h(u.email) + '" disabled><div class="hint">لا يمكن تغيير البريد الإلكتروني</div></div>' +
+    field({ id: 'pJob', name: 'jobTitle', type: 'select', label: 'المسمى الوظيفي', value: u.jobTitle, options: (st.jobTitles.indexOf(u.jobTitle) === -1 && u.jobTitle ? [u.jobTitle] : []).concat(st.jobTitles) }) +
+    field({ id: 'pDept', name: 'department', type: 'select', label: 'القسم', value: u.department, options: (st.departments.indexOf(u.department) === -1 && u.department ? [u.department] : []).concat(st.departments) }) +
+    '<div class="row"><span class="chip ' + (u.role === 'admin' ? 'maroon' : 'info') + '">' + (u.role === 'admin' ? 'مدير' : 'متدرب') + '</span><span class="chip">انضم في ' + fmtDate(u.createdAt) + '</span></div><br>' +
+    '<button class="btn" type="submit">حفظ التعديلات</button></form></div>' +
+    '<div class="card"><h2>تغيير كلمة المرور</h2><form id="fPw" novalidate>' +
+    field({ id: 'cwCur', name: 'current', type: 'password', label: 'كلمة المرور الحالية', required: true, autocomplete: 'current-password' }) +
+    field({ id: 'cwNew', name: 'password', type: 'password', label: 'كلمة المرور الجديدة', required: true, autocomplete: 'new-password', hint: pwHint() }) +
+    field({ id: 'cwNew2', name: 'password2', type: 'password', label: 'تأكيد كلمة المرور الجديدة', required: true, autocomplete: 'new-password' }) +
+    '<div class="hint" style="margin-bottom:10px">سيتم تسجيل الخروج من جميع الأجهزة الأخرى.</div><button class="btn" type="submit">تغيير كلمة المرور</button></form></div></div>', { title: 'حسابي' });
+  bindForm('fProf', function (d) { if (!d.name || d.name.trim().length < 3) { setFieldErr('pName', 'أدخل الاسم الكامل'); return; } return api('auth.updateProfile', d).then(function (r) { S.user = r.user; store('user', JSON.stringify(r.user)); toast('تم حفظ البيانات', 'ok'); }); });
+  bindForm('fPw', function (d) {
+    if (d.password !== d.password2) { setFieldErr('cwNew2', 'كلمتا المرور غير متطابقتين'); return; }
+    return api('auth.changePassword', d).then(function (r) { if (!S.user) return; setSession(r.token, S.user); toast('تم تغيير كلمة المرور', 'ok'); if (el('fPw')) el('fPw').reset(); })
+      .catch(function (e) { if (e.code === 'AUTH') setFieldErr('cwCur', e.message); else if (e.code === 'WEAK_PASSWORD') setFieldErr('cwNew', e.message); else throw e; });
+  });
+}, true);
+</script>

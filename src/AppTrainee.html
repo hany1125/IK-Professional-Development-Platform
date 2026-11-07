@@ -1,0 +1,211 @@
+<script>
+/* ============================================================
+   AppTrainee — الصفحة الرئيسية، الورشة، الوحدات، الاختبارات، الشهادات
+   ============================================================ */
+var SEC_META = { example: ['💡', 'example'], tip: ['✅', 'tip'], warning: ['⚠️', 'warning'], remember: ['📌', 'remember'], activity: ['🪞', 'activity'] };
+
+function renderSection(s) {
+  var t = s.type || 'text';
+  if (t === 'text') return (s.title ? '<h3>' + h(s.title) + '</h3>' : '') + richText(s.body);
+  if (t === 'list') return (s.title ? '<h3>' + h(s.title) + '</h3>' : '') + richText(s.body) + '<ul>' + (s.items || []).map(function (i) { return '<li>' + h(i) + '</li>'; }).join('') + '</ul>';
+  if (t === 'steps') return (s.title ? '<h3>' + h(s.title) + '</h3>' : '') + richText(s.body) + '<ol class="steps">' + (s.items || []).map(function (i) { return '<li>' + h(i) + '</li>'; }).join('') + '</ol>';
+  if (t === 'table') {
+    var rows = s.rows || []; if (!rows.length) return '';
+    return (s.title ? '<h3>' + h(s.title) + '</h3>' : '') + '<div style="overflow:auto"><table><thead><tr>' + rows[0].map(function (c) { return '<th scope="col">' + h(c) + '</th>'; }).join('') + '</tr></thead><tbody>' +
+      rows.slice(1).map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + h(c) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table></div>';
+  }
+  var m = SEC_META[t] || ['ℹ', 'tip'];
+  return '<div class="callout ' + m[1] + '"><div class="ct"><span aria-hidden="true">' + m[0] + '</span> ' + h(s.title || '') + '</div>' + richText(s.body) + ((s.items || []).length ? '<ul>' + s.items.map(function (i) { return '<li>' + h(i) + '</li>'; }).join('') + '</ul>' : '') + '</div>';
+}
+
+function wsProgressCard(w) {
+  var p = w.progress || {};
+  var status = p.passed ? '<span class="chip ok">✔ مجتازة</span>' : p.started ? '<span class="chip warn">قيد التقدم</span>' : '<span class="chip info">جديدة</span>';
+  var btn = p.passed ? 'مراجعة الورشة' : p.started ? 'متابعة التعلم' : 'بدء الورشة';
+  return '<a class="card ws-card" href="#/ws/' + h(w.id) + '" aria-label="' + h(w.title) + ' — ' + btn + '"><div class="row between"><h3 class="ttl">' + h(w.title) + '</h3>' + status + '</div><p class="desc">' + h(w.description) + '</p>' +
+    '<div class="meta"><span>📚 ' + w.moduleCount + ' وحدات</span>' + (w.scheduledAt ? '<span>📅 ' + arDay(w.scheduledAt) + ' ' + fmtDate(w.scheduledAt, true) + '</span>' : '') + (w.trainerName ? '<span>👤 ' + h(w.trainerName) + '</span>' : '') + (w.durationMin ? '<span>⏱ ' + w.durationMin + ' دقيقة</span>' : '') + '<span>🎯 نسبة النجاح ' + w.passScore + '%</span></div>' +
+    '<div class="progress" role="progressbar" aria-valuenow="' + (p.percent || 0) + '" aria-valuemin="0" aria-valuemax="100" aria-label="نسبة التقدم"><span style="width:' + (p.percent || 0) + '%"></span></div>' +
+    '<div class="row between"><span style="font-size:13px;color:var(--muted)">التقدم ' + (p.percent || 0) + '%' + (p.bestPercent !== null && p.bestPercent !== undefined ? ' — أفضل نتيجة ' + pct(p.bestPercent) : '') + '</span><span class="btn sm ' + (p.passed ? 'ghost' : '') + '">' + btn + ' ←</span></div></a>';
+}
+
+/* ---------- الرئيسية ---------- */
+route('#/home', function () {
+  var u = S.user;
+  layout('<div class="hero"><h1>مرحبًا، ' + h(u.name) + ' 👋</h1><p>' + h(u.jobTitle || '') + (u.department ? ' — ' + h(u.department) : '') + '</p><div class="vision">' + h(VISION) + '</div></div>' +
+    '<div class="row between" style="margin-bottom:12px"><h2 style="margin:0">الورش التدريبية المتاحة</h2><a class="btn sm soft" href="#/certs">🎓 شهاداتي</a></div><div id="wsList">' + skeletonList(3) + '</div>', { title: 'الرئيسية' });
+  api('ws.list').then(function (d) {
+    S.cache.wsList = d;
+    var box = el('wsList'); if (!box) return;
+    if (!d.workshops.length) { box.innerHTML = '<div class="card">' + emptyState('📭', 'لا توجد ورش منشورة حاليًا', 'ستصلك دعوة بالبريد عند إضافة ورشة جديدة') + '</div>'; return; }
+    var passed = d.workshops.filter(function (w) { return w.progress.passed; }).length;
+    var inprog = d.workshops.filter(function (w) { return w.progress.started && !w.progress.passed; }).length;
+    box.innerHTML = '<div class="grid c4" style="margin-bottom:18px">' +
+      '<div class="kpi"><div class="n">' + d.workshops.length + '</div><div class="l">ورشة متاحة</div></div><div class="kpi info"><div class="n">' + inprog + '</div><div class="l">قيد التقدم</div></div><div class="kpi ok"><div class="n">' + passed + '</div><div class="l">ورشة مجتازة</div></div><div class="kpi gold"><div class="n">' + d.certificates + '</div><div class="l">شهادة</div></div></div>' +
+      '<div class="grid c2">' + d.workshops.map(wsProgressCard).join('') + '</div>';
+  }).catch(function (e) { if (el('wsList')) el('wsList').innerHTML = alertBox('err', h(errMsg(e))) + '<button class="btn ghost" onclick="render()">إعادة المحاولة</button>'; });
+}, true);
+
+/* ---------- صفحة الورشة ---------- */
+function loadWs(id) {
+  return api('ws.get', { id: id }).then(function (d) { S.cache['ws:' + id] = d; return d; });
+}
+route('#/ws/:id', function (id) {
+  layout(skeletonList(2), { title: 'الورشة' });
+  loadWs(id).then(function (d) {
+    var w = d.workshop, c = d.content, p = d.progress;
+    var mods = c.modules.map(function (m, i) {
+      var done = p.modulesDone.indexOf(i) !== -1, ack = p.acknowledged.indexOf(i) !== -1;
+      var cls = done ? 'done' : (i === p.lastModule || (i === 0 && !p.started) ? 'current' : '');
+      return '<a class="mod-item ' + cls + '" href="#/ws/' + h(id) + '/m/' + i + '"><span class="num" aria-hidden="true">' + (done ? '✔' : i + 1) + '</span><span style="flex:1"><b>' + h(m.title) + '</b><br><small style="color:var(--muted)">' + (m.objectives || []).length + ' أهداف · ' + m.questionCount + ' أسئلة' + (ack && !done ? ' · تمت القراءة' : '') + '</small></span><span class="chip ' + (done ? 'ok' : ack ? 'warn' : '') + '">' + (done ? 'مجتازة' : ack ? 'بانتظار الاختبار' : 'لم تبدأ') + '</span></a>';
+    }).join('');
+    var finalBtn = p.passed ? alertBox('ok', 'لقد اجتزت هذه الورشة بنسبة <b>' + pct(p.bestPercent) + '</b>. ' + (p.certificateId ? '<a href="#/cert/' + h(p.certificateId) + '">عرض الشهادة</a>' : ''))
+      : p.allModulesDone ? '<a class="btn gold lg block" href="#/ws/' + h(id) + '/final">🏁 بدء الاختبار النهائي (' + c.finalQuestionCount + ' أسئلة)</a>'
+        : alertBox('info', '🔒 يُفتح الاختبار النهائي بعد اجتياز اختبارات جميع الوحدات (' + p.modulesDone.length + ' من ' + c.modules.length + ').');
+    var policy = d.policy || {};
+    var policyTxt = (policy.retryPolicy === 'limited' ? 'عدد المحاولات لكل اختبار: ' + policy.maxAttempts : 'إعادة المحاولة متاحة دون حد') + (Number(policy.retryCooldownMin) > 0 ? ' · فاصل ' + policy.retryCooldownMin + ' دقيقة بين المحاولات' : '') + ' · الإجابات الصحيحة ' + ({ afterPass: 'تُعرض بعد الاجتياز', always: 'تُعرض بعد كل تسليم', never: 'لا تُعرض' }[policy.showCorrectAnswers] || '');
+    layout('<a href="#/home" class="btn sm soft">← العودة للورش</a>' +
+      '<div class="card" style="margin-top:12px"><div class="row between"><h1 style="margin:0">' + h(w.title) + '</h1>' + (p.passed ? '<span class="chip ok">مجتازة</span>' : '') + '</div><p class="sub" style="margin:8px 0">' + h(w.description) + '</p>' +
+      '<div class="row" style="font-size:13.5px;color:var(--muted)"><span>📚 ' + c.modules.length + ' وحدات</span><span>🎯 نسبة النجاح ' + w.passScore + '%</span>' + (w.trainerName ? '<span>👤 المدرب: ' + h(w.trainerName) + '</span>' : '') + (w.scheduledAt ? '<span>📅 ' + arDay(w.scheduledAt) + ' ' + fmtDate(w.scheduledAt, true) + '</span>' : '') + (w.location ? '<span>📍 ' + h(w.location) + '</span>' : '') + (w.durationMin ? '<span>⏱ ' + w.durationMin + ' دقيقة</span>' : '') + '</div>' +
+      '<div style="margin:14px 0 6px;font-weight:700">التقدم الكلي: ' + p.percent + '%</div><div class="progress" role="progressbar" aria-valuenow="' + p.percent + '" aria-valuemin="0" aria-valuemax="100" aria-label="التقدم الكلي"><span style="width:' + p.percent + '%"></span></div><p class="hint" style="margin:8px 0 0">' + h(policyTxt) + '</p></div>' +
+      '<div class="grid c2" style="margin-top:16px;align-items:start"><div class="card"><h2>أهداف الورشة</h2><ul>' + (c.objectives || []).map(function (o) { return '<li>' + h(o) + '</li>'; }).join('') + '</ul></div>' +
+      '<div class="card"><h2>الوحدات التدريبية</h2><div class="mod-list">' + mods + '</div><div style="margin-top:16px">' + finalBtn + '</div><div style="margin-top:10px"><a class="btn sm ghost" href="#/ws/' + h(id) + '/history">📈 سجل محاولاتي</a></div></div></div>', { title: w.title });
+  }).catch(function (e) { layout(alertBox('err', h(errMsg(e))) + '<a class="btn" href="#/home">العودة</a>'); });
+}, true);
+
+/* ---------- صفحة الوحدة ---------- */
+route('#/ws/:id/m/:i', function (id, iStr) {
+  var i = parseInt(iStr, 10);
+  layout(skeletonList(2));
+  var pr = S.cache['ws:' + id] ? Promise.resolve(S.cache['ws:' + id]) : loadWs(id);
+  pr.then(function (d) {
+    var m = d.content.modules[i]; if (!m) { go('#/ws/' + id); return; }
+    var p = d.progress, done = p.modulesDone.indexOf(i) !== -1, ack = p.acknowledged.indexOf(i) !== -1;
+    var res = (m.resources || []).map(function (r) { var ic = r.type === 'video' ? '🎬' : r.type === 'file' ? '📎' : '🔗'; return '<a class="res-item" href="' + h(r.url) + '" target="_blank" rel="noopener noreferrer"><span aria-hidden="true">' + ic + '</span> <span style="flex:1">' + h(r.title || r.url) + '</span><span dir="ltr" style="font-size:12px;color:var(--muted);max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + h(r.url) + '</span></a>'; }).join('');
+    var nav = '<div class="row between" style="margin-top:20px">' + (i > 0 ? '<a class="btn ghost" href="#/ws/' + h(id) + '/m/' + (i - 1) + '">→ الوحدة السابقة</a>' : '<span></span>') + (i < d.content.modules.length - 1 ? '<a class="btn ghost" href="#/ws/' + h(id) + '/m/' + (i + 1) + '">الوحدة التالية ←</a>' : '<a class="btn ghost" href="#/ws/' + h(id) + '">صفحة الورشة</a>') + '</div>';
+    layout('<div class="row between"><a href="#/ws/' + h(id) + '" class="btn sm soft">← ' + h(d.workshop.title) + '</a><span class="chip">الوحدة ' + (i + 1) + ' من ' + d.content.modules.length + '</span></div>' +
+      '<article class="card" style="margin-top:12px"><h1>' + h(m.title) + '</h1>' + (m.summary ? '<p class="sub">' + h(m.summary) + '</p>' : '') +
+      '<div class="callout tip"><div class="ct"><span aria-hidden="true">🎯</span> الأهداف السلوكية</div><ul>' + (m.objectives || []).map(function (o) { return '<li>' + h(o) + '</li>'; }).join('') + '</ul></div>' +
+      '<div class="content">' + (m.sections || []).map(renderSection).join('') + '</div>' +
+      (res ? '<h3 style="color:var(--maroon)">الموارد والروابط</h3>' + res : '') +
+      '<hr style="border:0;border-top:1px solid var(--line);margin:22px 0">' +
+      '<div class="card tight" style="background:var(--maroon-bg)"><div class="row between"><div><b>' + (done ? '✔ اجتزت اختبار هذه الوحدة' : 'جاهز للاختبار المرحلي؟') + '</b><br><small style="color:var(--muted)">' + m.questionCount + ' أسئلة اختيار من متعدد · نسبة النجاح ' + d.workshop.passScore + '%</small></div>' +
+      '<div class="row">' + (ack ? '<span class="chip ok">تم الإقرار بالقراءة</span>' : '<button class="btn ghost" id="btnAck" type="button">أقرّ بأنني قرأت المحتوى</button>') + '<a class="btn ' + (done ? 'soft' : 'gold') + '" href="#/ws/' + h(id) + '/quiz/' + i + '">' + (done ? 'إعادة الاختبار' : 'بدء اختبار الوحدة') + '</a></div></div></div>' + nav + '</article>', { title: m.title });
+    if (el('btnAck')) el('btnAck').addEventListener('click', function () {
+      var b = this; busyBtn(b, true, 'جارٍ الحفظ');
+      api('ws.ack', { workshopId: id, moduleIndex: i }).then(function (r) { d.progress = r.progress; toast('تم تسجيل إقرارك بقراءة الوحدة', 'ok'); b.outerHTML = '<span class="chip ok">تم الإقرار بالقراءة</span>'; }).catch(function (e) { showErr(e); busyBtn(b, false); });
+    });
+  }).catch(function (e) { layout(alertBox('err', h(errMsg(e))) + '<a class="btn" href="#/home">العودة</a>'); });
+}, true);
+
+/* ---------- الاختبار ---------- */
+function quizPage(wsId, kind, moduleIndex) {
+  layout(skeletonList(3), { title: 'الاختبار' });
+  api('quiz.start', { workshopId: wsId, kind: kind, moduleIndex: moduleIndex }).then(function (q) {
+    var key = 'quiz:' + q.attemptId;
+    var saved = {}; try { saved = JSON.parse(store(key) || '{}'); } catch (e) { }
+    var html = '<a href="#/ws/' + h(wsId) + '" class="btn sm soft">← العودة للورشة</a><div class="card" style="margin-top:12px"><h1>' + h(q.title) + '</h1>' +
+      '<div class="row" style="color:var(--muted);font-size:13.5px"><span>📝 ' + q.total + ' أسئلة</span><span>🎯 نسبة النجاح ' + q.passScore + '%</span>' + (q.remaining !== null ? '<span>🔁 المحاولات المتبقية: ' + q.remaining + '</span>' : '<span>🔁 المحاولة رقم ' + (q.attemptCount + 1) + '</span>') + '</div>' +
+      alertBox('info', 'اختر إجابة واحدة لكل سؤال. يتم التصحيح على الخادم بعد التسليم، ولن تُحتسب الأسئلة غير المجاب عنها.') +
+      '<form id="fQuiz" novalidate>' + q.questions.map(function (qq, di) {
+        return '<fieldset class="q-card" id="qc' + di + '"><legend class="qt" style="padding:0 6px">' + (di + 1) + '. ' + h(qq.text) + '</legend>' + qq.options.map(function (o, oi) {
+          var sel = saved[di] === oi;
+          return '<label class="opt ' + (sel ? 'selected' : '') + '"><input type="radio" name="q' + di + '" value="' + oi + '"' + (sel ? ' checked' : '') + '> <span>' + h(o) + '</span></label>';
+        }).join('') + '</fieldset>';
+      }).join('') + '<div class="row between"><span id="qStatus" style="color:var(--muted)" aria-live="polite"></span><button class="btn gold lg" type="submit">تسليم الإجابات</button></div></form></div>';
+    layout(html, { title: q.title });
+    var form = el('fQuiz');
+    function collect() { var a = []; for (var i = 0; i < q.total; i++) { var c = form.querySelector('input[name=q' + i + ']:checked'); a.push(c ? parseInt(c.value, 10) : null); } return a; }
+    function refresh() { var a = collect(); var n = a.filter(function (x) { return x !== null; }).length; el('qStatus').textContent = 'أجبت عن ' + n + ' من ' + q.total; $$('.opt', form).forEach(function (o) { o.classList.toggle('selected', o.querySelector('input').checked); }); var o = {}; a.forEach(function (v, i) { if (v !== null) o[i] = v; }); store(key, JSON.stringify(o)); }
+    form.addEventListener('change', refresh); refresh();
+    var reqKey = uuid(), submitting = false;
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      if (submitting) return;
+      var a = collect(); var missing = []; a.forEach(function (v, i) { if (v === null) missing.push(i); });
+      $$('.q-card').forEach(function (c, i) { c.classList.toggle('unanswered', missing.indexOf(i) !== -1); });
+      var doSubmit = function () {
+        submitting = true;
+        var btn = $('button[type=submit]', form); busyBtn(btn, true, 'جارٍ التصحيح');
+        api('quiz.submit', { attemptId: q.attemptId, answers: a, requestKey: reqKey }).then(function (r) { store(key, null); delete S.cache['ws:' + wsId]; showResult(wsId, r); }).catch(function (err) { submitting = false; showErr(err); busyBtn(btn, false); });
+      };
+      if (missing.length) {
+        confirmDlg('أسئلة غير مجاب عنها', 'لم تجب عن ' + missing.length + ' من الأسئلة (' + missing.map(function (i) { return i + 1; }).join('، ') + '). ستُحتسب خاطئة. هل تريد التسليم على أي حال؟', 'تسليم على أي حال').then(function (ok) { if (ok) doSubmit(); else { var fc = el('qc' + missing[0]); fc.scrollIntoView({ behavior: 'smooth', block: 'center' }); var inp = fc.querySelector('input'); if (inp) inp.focus(); } });
+      } else doSubmit();
+    });
+  }).catch(function (e) {
+    layout('<a href="#/ws/' + h(wsId) + '" class="btn sm soft">← العودة للورشة</a><div class="card" style="margin-top:12px">' + alertBox(e.code === 'ALREADY_PASSED' ? 'ok' : 'warn', (e.code === 'ALREADY_PASSED' ? '🎓 ' : '🔒 ') + h(errMsg(e))) + '</div>');
+  });
+}
+function showResult(wsId, r) {
+  var color = r.passed ? 'var(--ok)' : 'var(--err)';
+  var side = r.side || {};
+  var review = r.review.map(function (it) {
+    var body = '';
+    if (r.showAnswers && it.options) body = it.options.map(function (o, oi) { var cls = oi === it.answer ? 'correct' : (oi === it.chosen ? 'wrong' : ''); return '<div class="opt ' + cls + '" style="cursor:default"><span aria-hidden="true">' + (oi === it.answer ? '✔' : oi === it.chosen ? '✖' : '○') + '</span> <span>' + h(o) + (oi === it.answer ? ' <span class="sr-only">(الإجابة الصحيحة)</span>' : oi === it.chosen ? ' <span class="sr-only">(إجابتك)</span>' : '') + '</span></div>'; }).join('') + (it.explanation ? '<div class="callout tip" style="margin:8px 0 0"><div class="ct">💡 التوضيح</div>' + h(it.explanation) + '</div>' : '');
+    return '<div class="q-card"><div class="qt">' + it.n + '. ' + h(it.text) + ' <span class="chip ' + (it.correct ? 'ok' : it.chosen === null ? 'warn' : 'err') + '">' + (it.correct ? 'صحيحة' : it.chosen === null ? 'لم تُجب' : 'خاطئة') + '</span></div>' + body + '</div>';
+  }).join('');
+  var mailNote = '';
+  if (side.certificateId) {
+    var tm = side.mail && side.mail.trainee;
+    mailNote = tm && tm.ok ? ' وإرسالها إلى بريدك' : (tm ? ' — تعذر إرسالها بالبريد حاليًا وستُعاد المحاولة تلقائيًا، ويمكنك تنزيلها الآن من «شهاداتي»' : '');
+  }
+  layout('<div class="card" style="text-align:center"><div class="score-ring" style="--p:' + r.percent + ';--c:' + color + '" role="img" aria-label="النتيجة ' + pct(r.percent) + '"><span>' + pct(r.percent) + '</span></div>' +
+    '<h1 style="color:' + color + '">' + (r.passed ? (r.kind === 'final' ? '🎉 مبارك! اجتزت الورشة بنجاح' : '✔ اجتزت اختبار الوحدة') : 'لم تصل إلى نسبة النجاح بعد') + '</h1>' +
+    '<p class="sub">أجبت بشكل صحيح عن ' + r.score + ' من ' + r.total + ' — نسبة النجاح المطلوبة ' + r.passScore + '%' + (r.duplicate ? ' (نتيجة محفوظة مسبقًا — لم تُحتسب محاولة جديدة)' : '') + '</p>' +
+    (side.certificateId ? '<div style="text-align:right">' + alertBox('ok', '🎓 تم إصدار شهادة الإتمام' + mailNote + '. <a href="#/cert/' + h(side.certificateId) + '">عرض الشهادة</a>') + '</div>' : '') +
+    (side.certificateError ? '<div style="text-align:right">' + alertBox('warn', h(side.certificateError)) + '</div>' : '') +
+    '<div class="row" style="justify-content:center;margin-top:10px">' + (r.kind === 'module' && !r.passed ? '<a class="btn gold" href="#/ws/' + h(wsId) + '/m/' + r.moduleIndex + '">مراجعة الوحدة</a><a class="btn" href="#/ws/' + h(wsId) + '/quiz/' + r.moduleIndex + '">إعادة المحاولة</a>' : '') +
+    (r.kind === 'final' && !r.passed ? '<a class="btn" href="#/ws/' + h(wsId) + '/final">إعادة المحاولة</a>' : '') +
+    (r.kind === 'module' && r.passed && r.progress && !r.progress.allModulesDone && r.moduleIndex + 1 < (S.cache['ws:' + wsId] ? S.cache['ws:' + wsId].content.modules.length : 999) ? '<a class="btn gold" href="#/ws/' + h(wsId) + '/m/' + (r.moduleIndex + 1) + '">الوحدة التالية ←</a>' : '') +
+    (r.kind === 'module' && r.passed && r.progress && r.progress.allModulesDone && !r.progress.passed ? '<a class="btn gold" href="#/ws/' + h(wsId) + '/final">🏁 الاختبار النهائي</a>' : '') +
+    '<a class="btn ghost" href="#/ws/' + h(wsId) + '">صفحة الورشة</a></div></div>' +
+    '<div class="card" style="margin-top:16px"><h2>مراجعة الإجابات</h2>' + (r.showAnswers ? '' : '<p class="sub">وفق سياسة المنصة، الإجابات الصحيحة ' + ({ afterPass: 'تُعرض بعد الاجتياز فقط', never: 'لا تُعرض' }[(S.settings || {}).showCorrectAnswers] || 'لا تُعرض الآن') + '.</p>') + review + '</div>', { title: 'النتيجة' });
+}
+route('#/ws/:id/quiz/:i', function (id, i) { quizPage(id, 'module', parseInt(i, 10)); }, true);
+route('#/ws/:id/final', function (id) { quizPage(id, 'final', -1); }, true);
+
+route('#/ws/:id/history', function (id) {
+  layout(skeletonList(2));
+  api('quiz.history', { workshopId: id }).then(function (d) {
+    var rows = d.attempts.map(function (a) { return '<tr><td>' + (a.kind === 'final' ? '<b>الاختبار النهائي</b>' : 'الوحدة ' + (a.moduleIndex + 1)) + (a.currentVersion ? '' : ' <span class="chip">إصدار سابق</span>') + '</td><td>' + a.score + '/' + a.total + '</td><td><b>' + pct(a.percent) + '</b></td><td>' + (a.passed ? '<span class="chip ok">اجتاز</span>' : '<span class="chip err">لم يجتز</span>') + '</td><td>' + fmtDate(a.submittedAt, true) + '</td></tr>'; }).join('');
+    layout('<a href="#/ws/' + h(id) + '" class="btn sm soft">← العودة للورشة</a><div class="card" style="margin-top:12px"><h1>سجل المحاولات</h1>' +
+      (d.result ? '<div class="grid c3" style="margin-bottom:14px"><div class="kpi ok"><div class="n">' + pct(d.result.bestPercent) + '</div><div class="l">أفضل نتيجة (النهائي)</div></div><div class="kpi info"><div class="n">' + pct(d.result.lastPercent) + '</div><div class="l">آخر نتيجة</div></div><div class="kpi gold"><div class="n">' + d.result.attemptCount + '</div><div class="l">عدد محاولات النهائي</div></div></div>' : '') +
+      (rows ? '<div class="table-wrap"><table class="tbl"><thead><tr><th>الاختبار</th><th>الدرجة</th><th>النسبة</th><th>النتيجة</th><th>التاريخ</th></tr></thead><tbody>' + rows + '</tbody></table></div>' : emptyState('📭', 'لا توجد محاولات بعد')) + '</div>', { title: 'سجل المحاولات' });
+  }).catch(function (e) { layout(alertBox('err', h(errMsg(e))) + '<a class="btn" href="#/ws/' + h(id) + '">العودة</a>'); });
+}, true);
+
+/* ---------- الشهادات ---------- */
+route('#/certs', function () {
+  layout('<h1>شهاداتي</h1><p class="sub">شهادات إتمام الورش التي اجتزتها</p><div id="certs">' + skeletonList(2) + '</div>', { title: 'شهاداتي' });
+  api('cert.mine').then(function (d) {
+    var box = el('certs'); if (!box) return;
+    if (!d.certificates.length) { box.innerHTML = '<div class="card">' + emptyState('🎓', 'لا توجد شهادات بعد', 'أكمل ورشة واجتز اختبارها النهائي للحصول على شهادتك') + '</div>'; return; }
+    box.innerHTML = '<div class="grid c3">' + d.certificates.map(function (c) {
+      return '<div class="cert-thumb"><div style="font-size:30px" aria-hidden="true">🎓</div><b>' + h(c.workshopTitle) + '</b><div style="font-size:13px;color:var(--muted)">رقم الشهادة: ' + ltr(c.serial) + '<br>تاريخ الإصدار: ' + fmtDate(c.issuedAt) + (c.percent !== null && c.percent !== undefined ? '<br>النسبة: ' + pct(c.percent) : '') + '</div>' + (c.revoked ? '<span class="chip err">ملغاة</span>' : '') + '<a class="btn sm" href="#/cert/' + h(c.id) + '">عرض وتنزيل</a></div>';
+    }).join('') + '</div>';
+  }).catch(function (e) { if (el('certs')) el('certs').innerHTML = alertBox('err', h(errMsg(e))); });
+}, true);
+
+function fitCert(container) {
+  var cert = $('.cert', container); if (!cert) return;
+  var w = container.clientWidth - 32; var scale = Math.min(1, w / cert.offsetWidth);
+  cert.style.transform = 'scale(' + scale + ')'; container.style.height = (cert.offsetHeight * scale + 32) + 'px';
+}
+function certActions(id, html, fileBase) {
+  return { print: function () { el('printarea').innerHTML = html; document.body.classList.add('print-cert'); setTimeout(function () { window.print(); setTimeout(function () { document.body.classList.remove('print-cert'); el('printarea').innerHTML = ''; }, 500); }, 100); },
+    pdf: function (btn) { busyBtn(btn, true, 'جارٍ التجهيز'); api('cert.pdf', { id: id }).then(function (r) { downloadBase64(r.fileName || (fileBase + '.pdf'), r.base64, r.mime); toast('تم تنزيل ملف PDF', 'ok'); }).catch(showErr).then(function () { busyBtn(btn, false); }); } };
+}
+route('#/cert/:id', function (id) {
+  layout(skeletonList(1), { title: 'الشهادة' });
+  api('cert.get', { id: id }).then(function (d) {
+    var c = d.certificate;
+    layout('<div class="row between"><a href="' + (S.user.role === 'admin' && S.route.indexOf('#/cert/') === 0 && store('certBack') === 'admin' ? '#/admin/certs' : '#/certs') + '" class="btn sm soft">← العودة</a><div class="row"><button class="btn sm ghost" id="btnPrint" type="button">🖨 طباعة / حفظ PDF من المتصفح</button><button class="btn sm gold" id="btnPdf" type="button">⬇ تنزيل PDF</button></div></div>' +
+      '<div class="card" style="margin-top:12px"><div class="row between"><h1 style="margin:0;font-size:19px">' + h(c.workshopTitle) + '</h1>' + (c.revoked ? '<span class="chip err">ملغاة</span>' : '<span class="chip ok">صالحة</span>') + '</div>' +
+      '<div class="row" style="font-size:13.5px;color:var(--muted);margin:6px 0 12px"><span>رقم: ' + ltr(c.serial) + '</span><span>الإصدار: ' + fmtDate(c.issuedAt) + '</span><span>للتحقق: <a dir="ltr" href="' + h(d.verifyUrl) + '" target="_blank" rel="noopener">رابط التحقق</a></span></div>' +
+      '<div class="cert-view" id="certView">' + d.html + '</div><p class="hint" style="margin-top:8px">للحصول على أفضل نتيجة عند الطباعة اختر الاتجاه الأفقي وحجم A4 وإلغاء الهوامش.</p></div>', { title: 'الشهادة' });
+    fitCert(el('certView')); window.addEventListener('resize', debounce(function () { if (el('certView')) fitCert(el('certView')); }, 200));
+    var a = certActions(id, d.html, 'certificate-' + c.serial);
+    el('btnPrint').addEventListener('click', a.print); el('btnPdf').addEventListener('click', function () { a.pdf(this); });
+  }).catch(function (e) { layout(alertBox('err', h(errMsg(e))) + '<a class="btn" href="#/certs">العودة</a>'); });
+}, true);
+</script>

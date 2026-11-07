@@ -1,0 +1,250 @@
+<script>
+/* ============================================================
+   AppCore — الاتصال بالخادم، التوجيه، المكونات المشتركة
+   ------------------------------------------------------------
+   - قناة الاتصال الوحيدة: google.script.run.api({action, payload, token})
+   - التخزين المحلي (localStorage) للتجربة فقط: رمز الجلسة، إجابات مؤقتة، صور الهوية. المرجع المعتمد هو الخادم.
+   ============================================================ */
+var S = { user: null, settings: null, setup: null, token: null, route: '', cache: {}, branding: {} };
+var APP_NAME = (window.IKP_BOOT && window.IKP_BOOT.app && window.IKP_BOOT.app.NAME) || 'منصة ابن خلدون للتدريب والتطوير المهني';
+var SCHOOL = (window.IKP_BOOT && window.IKP_BOOT.app && window.IKP_BOOT.app.SCHOOL) || 'مدرسة ابن خلدون الإعدادية للبنين';
+var VISION = (window.IKP_BOOT && window.IKP_BOOT.app && window.IKP_BOOT.app.VISION) || 'متعلم ريادي لتنمية مستدامة';
+
+/* ---------- أدوات ---------- */
+function h(s) { return String(s === undefined || s === null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+function ltr(s) { return '<span dir="ltr">' + h(s) + '</span>'; }
+function $(sel, root) { return (root || document).querySelector(sel); }
+function $$(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+function el(id) { return document.getElementById(id); }
+function fmtDate(iso, withTime) {
+  if (!iso) return '—';
+  var d = new Date(iso); if (isNaN(d)) return h(iso);
+  var p = function (n) { return (n < 10 ? '0' : '') + n; };
+  var s = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  if (withTime) s += ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  return '<span dir="ltr">' + s + '</span>';
+}
+function arDay(iso) { var days = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت']; var d = new Date(iso); return isNaN(d) ? '' : days[d.getDay()]; }
+function pct(n) { return (Math.round(Number(n) * 10) / 10) + '%'; }
+function initials(name) { return String(name || '?').trim().split(/\s+/).slice(0, 2).map(function (w) { return w[0]; }).join(''); }
+function store(k, v) { try { if (v === undefined) return localStorage.getItem('ikp:' + k); if (v === null) localStorage.removeItem('ikp:' + k); else localStorage.setItem('ikp:' + k, v); } catch (e) { return null; } }
+function debounce(fn, ms) { var t; return function () { var a = arguments, c = this; clearTimeout(t); t = setTimeout(function () { fn.apply(c, a); }, ms || 300); }; }
+function uuid() { return 'r' + Date.now().toString(36) + Math.random().toString(36).substr(2, 8); }
+function asset(which) { return (S.branding && S.branding[which]) || window.IKP_ASSETS[which] || ''; }
+
+/* ---------- الاتصال بالخادم ---------- */
+function api(action, payload, opts) {
+  opts = opts || {};
+  return new Promise(function (resolve, reject) {
+    if (!navigator.onLine) { reject({ code: 'OFFLINE', message: 'لا يوجد اتصال بالإنترنت. تحقق من الاتصال ثم أعد المحاولة.' }); return; }
+    if (!window.google || !google.script || !google.script.run) { reject({ code: 'NO_BRIDGE', message: 'يجب فتح المنصة من رابط تطبيق الويب في Google Apps Script.' }); return; }
+    var req = { action: action, payload: payload || {}, token: S.token || '' };
+    if (req.payload && typeof req.payload === 'object' && !req.payload.agent && /^auth\.|^setup\./.test(action)) req.payload.agent = navigator.userAgent.substr(0, 100);
+    document.body.classList.add('busy');
+    google.script.run
+      .withSuccessHandler(function (res) {
+        document.body.classList.remove('busy');
+        if (!res) { reject({ code: 'EMPTY', message: 'استجابة فارغة من الخادم.' }); return; }
+        if (res.ok) resolve(res.data);
+        else {
+          if (res.code === 'UNAUTHENTICATED' && S.token && req.token !== S.token && !opts._retried) {
+            // تغيّر رمز الجلسة أثناء الطلب (مثل تغيير كلمة المرور): نعيد الطلب مرة واحدة بالرمز الحالي
+            api(action, payload, { _retried: true }).then(resolve, reject); return;
+          }
+          // لا نُنهي الجلسة الحالية بسبب استجابة متأخرة لطلب أُرسل برمز جلسة قديم
+          if (res.code === 'UNAUTHENTICATED' && S.token && req.token === S.token) { setSession(null, null); toast('انتهت الجلسة. يُرجى تسجيل الدخول مجددًا.', 'warn'); go('#/login'); }
+          reject(res);
+        }
+      })
+      .withFailureHandler(function (err) {
+        document.body.classList.remove('busy');
+        var msg = String(err && err.message || err || '');
+        reject({ code: 'NETWORK', message: /ScriptError|network|fetch|timed out|load|Failed/i.test(msg) ? 'تعذر الاتصال بالخادم. تحقق من الاتصال ثم أعد المحاولة.' : 'حدث خطأ غير متوقع. أعد المحاولة.' });
+      })
+      .api(req);
+  });
+}
+function setSession(token, user) {
+  S.token = token; S.user = user;
+  store('token', token || null);
+  if (user) store('user', JSON.stringify(user)); else store('user', null);
+}
+
+/* ---------- الواجهة المشتركة ---------- */
+function toast(msg, type, ms) {
+  var t = document.createElement('div');
+  t.className = 'toast ' + (type || ''); t.setAttribute('role', 'status');
+  t.innerHTML = '<span aria-hidden="true">' + ({ ok: '✔', err: '✖', warn: '⚠' }[type] || 'ℹ') + '</span><span>' + h(msg) + '</span>';
+  el('toasts').appendChild(t);
+  setTimeout(function () { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(function () { t.remove(); }, 320); }, ms || 3800);
+}
+function errMsg(e) { return (e && e.message) || 'حدث خطأ غير متوقع.'; }
+function showErr(e) { toast(errMsg(e), 'err', 5000); }
+function alertBox(type, html) { return '<div class="alert ' + type + '"><span class="ic" aria-hidden="true">' + ({ ok: '✔', err: '✖', warn: '⚠' }[type] || 'ℹ') + '</span><div>' + html + '</div></div>'; }
+
+var _modalStack = [];
+function modal(opts) {
+  var bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  var mid = 'mtitle_' + uuid();
+  bg.innerHTML = '<div class="modal ' + (opts.wide ? 'wide' : '') + '" role="dialog" aria-modal="true" aria-labelledby="' + mid + '">' +
+    '<div class="mh"><h3 id="' + mid + '">' + h(opts.title || '') + '</h3><button class="xbtn" aria-label="إغلاق" data-close>×</button></div>' +
+    '<div class="mb">' + (opts.body || '') + '</div>' +
+    (opts.footer !== false ? '<div class="mf">' + (opts.footer || '<button class="btn ghost" data-close>إغلاق</button>') + '</div>' : '') + '</div>';
+  document.body.appendChild(bg);
+  var prev = document.activeElement;
+  var m = { el: bg, close: function () { if (!bg.parentNode) return; bg.remove(); _modalStack.pop(); document.removeEventListener('keydown', onKey); if (prev && prev.focus) prev.focus(); if (opts.onClose) opts.onClose(); } };
+  function onKey(e) {
+    if (_modalStack[_modalStack.length - 1] !== m) return;
+    if (e.key === 'Escape' && opts.dismissable !== false) { m.close(); }
+    if (e.key === 'Tab') {
+      var f = $$('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])', bg).filter(function (x) { return !x.disabled && x.offsetParent !== null; });
+      if (!f.length) return;
+      var first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+  }
+  _modalStack.push(m);
+  document.addEventListener('keydown', onKey);
+  $$('[data-close]', bg).forEach(function (b) { b.addEventListener('click', m.close); });
+  bg.addEventListener('mousedown', function (e) { if (e.target === bg && opts.dismissable !== false) m.close(); });
+  var ff = $('input:not([type=hidden]):not(.sr-only),select,textarea,button:not([data-close])', $('.mb', bg)) || $('[data-close]', bg); if (ff) ff.focus();
+  if (opts.onOpen) opts.onOpen(m);
+  return m;
+}
+function confirmDlg(title, body, okLabel, danger) {
+  return new Promise(function (resolve) {
+    var done = false;
+    var m = modal({ title: title, body: '<p>' + body + '</p>', footer: '<button class="btn ' + (danger ? 'danger' : '') + '" id="cok">' + h(okLabel || 'تأكيد') + '</button><button class="btn ghost" data-close>إلغاء</button>', onClose: function () { if (!done) resolve(false); } });
+    $('#cok', m.el).addEventListener('click', function () { done = true; resolve(true); m.close(); });
+    $('#cok', m.el).focus();
+  });
+}
+function busyBtn(btn, on, label) {
+  if (!btn || !btn.dataset) return;
+  if (on) { btn.dataset.label = btn.innerHTML; btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.innerHTML = '<span class="spin" aria-hidden="true"></span> ' + h(label || 'جارٍ التنفيذ...'); }
+  else { btn.disabled = false; btn.removeAttribute('aria-busy'); if (btn.dataset.label) btn.innerHTML = btn.dataset.label; }
+}
+function field(o) {
+  var id = o.id || ('f_' + uuid());
+  var input;
+  var common = ' id="' + id + '" name="' + h(o.name || id) + '"' + (o.required ? ' required aria-required="true"' : '') + ' aria-describedby="' + id + '_e' + (o.hint ? ' ' + id + '_h' : '') + '"';
+  if (o.type === 'select') input = '<select' + common + '>' + (o.options || []).map(function (op) { var v = typeof op === 'string' ? op : op.value, l = typeof op === 'string' ? op : op.label; return '<option value="' + h(v) + '"' + (String(o.value) === String(v) ? ' selected' : '') + '>' + h(l) + '</option>'; }).join('') + '</select>';
+  else if (o.type === 'textarea') input = '<textarea' + common + (o.rows ? ' rows="' + o.rows + '"' : '') + (o.placeholder ? ' placeholder="' + h(o.placeholder) + '"' : '') + (o.cls ? ' class="' + o.cls + '"' : '') + '>' + h(o.value || '') + '</textarea>';
+  else input = '<input type="' + (o.type || 'text') + '"' + common + ' value="' + h(o.value === undefined ? '' : o.value) + '"' + (o.placeholder ? ' placeholder="' + h(o.placeholder) + '"' : '') + (o.autocomplete ? ' autocomplete="' + o.autocomplete + '"' : '') + (o.min !== undefined ? ' min="' + o.min + '"' : '') + (o.max !== undefined ? ' max="' + o.max + '"' : '') + (o.inputmode ? ' inputmode="' + o.inputmode + '"' : '') + (o.cls ? ' class="' + o.cls + '"' : '') + (o.maxlength ? ' maxlength="' + o.maxlength + '"' : '') + '>';
+  return '<div class="field" id="' + id + '_w"><label for="' + id + '">' + h(o.label) + (o.required ? ' <span style="color:var(--err)" aria-hidden="true">*</span>' : '') + '</label>' + input + (o.hint ? '<div class="hint" id="' + id + '_h">' + o.hint + '</div>' : '') + '<div class="err" id="' + id + '_e" role="alert"></div></div>';
+}
+function setFieldErr(id, msg) { var w = el(id + '_w'); if (!w) return; w.classList.toggle('invalid', !!msg); el(id + '_e').textContent = msg || ''; if (msg && el(id)) el(id).focus(); }
+function formData(form) { var o = {}; $$('input,select,textarea', form).forEach(function (i) { if (!i.name) return; if (i.type === 'checkbox') o[i.name] = i.checked; else o[i.name] = i.value; }); return o; }
+function emptyState(icon, title, sub) { return '<div class="empty"><div class="big" aria-hidden="true">' + icon + '</div><div style="font-weight:700;color:var(--ink-2)">' + h(title) + '</div>' + (sub ? '<div style="font-size:13.5px">' + h(sub) + '</div>' : '') + '</div>'; }
+function skeletonList(n) { var s = ''; for (var i = 0; i < (n || 3); i++) s += '<div class="card" style="margin-bottom:12px" aria-hidden="true"><div class="skeleton" style="width:60%;height:22px;margin-bottom:10px"></div><div class="skeleton" style="width:90%"></div><div class="skeleton" style="width:40%;margin-top:8px"></div></div>'; return '<div aria-busy="true" aria-label="جارٍ التحميل">' + s + '</div>'; }
+function chipStatus(s) {
+  var map = { published: ['ok', 'منشورة'], draft: ['warn', 'مسودة'], unpublished: ['info', 'غير منشورة'], archived: ['', 'مؤرشفة'], active: ['ok', 'نشط'], pending: ['warn', 'بانتظار التفعيل'], suspended: ['err', 'موقوف'], admin: ['maroon', 'مدير'], trainee: ['info', 'متدرب'], sent: ['ok', 'أُرسل'], failed: ['err', 'فشل'], queued: ['info', 'في الانتظار'], expired: ['', 'منتهٍ'], skipped: ['', 'تم تخطيه'], passed: ['ok', 'اجتاز'], inprogress: ['info', 'قيد التقدم'], running: ['warn', 'قيد التنفيذ'], done: ['ok', 'مكتملة'], cancelled: ['', 'ملغاة'] };
+  var m = map[s] || ['', s]; return '<span class="chip ' + m[0] + '">' + h(m[1]) + '</span>';
+}
+function downloadText(name, text, mime) {
+  var blob = new Blob([text], { type: mime || 'text/plain;charset=utf-8' });
+  var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 800);
+}
+function downloadBase64(name, b64, mime) {
+  var bin = atob(b64), arr = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  var blob = new Blob([arr], { type: mime }); var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 800);
+}
+function readFileAsDataUrl(file) { return new Promise(function (res, rej) { var r = new FileReader(); r.onload = function () { res(r.result); }; r.onerror = rej; r.readAsDataURL(file); }); }
+function readFileAsText(file) { return new Promise(function (res, rej) { var r = new FileReader(); r.onload = function () { res(r.result); }; r.onerror = rej; r.readAsText(file, 'utf-8'); }); }
+
+/* تحويل النص إلى HTML آمن: فقرات + **غامق** + أسطر — لا يُنفَّذ أي HTML قادم من المحتوى */
+function richText(s) {
+  return String(s || '').split(/\n\s*\n/).map(function (p) {
+    var t = h(p.trim()).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
+    return t ? '<p>' + t + '</p>' : '';
+  }).join('');
+}
+
+/* ---------- التخطيط ---------- */
+function layout(inner, opts) {
+  opts = opts || {};
+  var u = S.user;
+  var nav = '';
+  var links = [];
+  if (u) {
+    links = u.role === 'admin' ? [['#/home', 'الورش', '📚'], ['#/certs', 'شهاداتي', '🎓'], ['#/admin', 'لوحة الإدارة', '🛠'], ['#/profile', 'حسابي', '👤']] : [['#/home', 'الورش', '📚'], ['#/certs', 'شهاداتي', '🎓'], ['#/profile', 'حسابي', '👤']];
+    var isActive = function (l) { return S.route.indexOf(l[0]) === 0 || (l[0] === '#/home' && S.route.indexOf('#/ws/') === 0); };
+    nav = '<nav class="desk row" aria-label="التنقل الرئيسي">' + links.map(function (l) { return '<a class="nav ' + (isActive(l) ? 'active' : '') + '" href="' + l[0] + '"' + (isActive(l) ? ' aria-current="page"' : '') + '>' + l[1] + '</a>'; }).join('') + '</nav>' +
+      '<div class="user desk"><span class="avatar" aria-hidden="true">' + h(initials(u.name)) + '</span><span>' + h(u.name.split(' ').slice(0, 2).join(' ')) + '</span><button class="nav" id="btnLogout" title="تسجيل الخروج">خروج</button></div>' +
+      '<button class="nav hamb" id="btnLogoutM" aria-label="تسجيل الخروج">خروج</button>';
+  }
+  var mob = u ? '<nav class="mobnav" aria-label="التنقل السفلي">' + links.map(function (l) { var act = S.route.indexOf(l[0]) === 0; return '<a href="' + l[0] + '" class="' + (act ? 'active' : '') + '"' + (act ? ' aria-current="page"' : '') + '><span class="ic" aria-hidden="true">' + l[2] + '</span>' + l[1] + '</a>'; }).join('') + '</nav>' : '';
+  var html = '<div class="offline" role="status">⚠ لا يوجد اتصال بالإنترنت — بعض الوظائف غير متاحة حتى عودة الاتصال.</div>' +
+    '<header class="brandbar"><img src="' + asset('header') + '" alt="' + h(SCHOOL) + ' — وزارة التربية والتعليم والتعليم العالي — دولة قطر"></header>' +
+    '<div class="topnav"><div class="wrap"><div class="title">' + h(APP_NAME) + '<small>' + h(SCHOOL) + ' — ' + h(VISION) + '</small></div>' + nav + '</div></div>' +
+    '<main class="page" id="main" tabindex="-1">' + inner + '</main>' +
+    '<footer class="footerbar"><img src="' + asset('footer') + '" alt="رؤيتنا: ' + h(VISION) + ' — رسالتنا وقيمنا — ' + h(SCHOOL) + '"><div class="copy">© ' + new Date().getFullYear() + ' ' + h(SCHOOL) + ' — ' + h(APP_NAME) + ' — الإصدار ' + h((window.IKP_BOOT && window.IKP_BOOT.version) || '') + '</div></footer>' + mob;
+  el('app').innerHTML = html;
+  window.scrollTo(0, 0);
+  var lo = function () { api('auth.logout').catch(function () { }); setSession(null, null); toast('تم تسجيل الخروج', 'ok'); go('#/login'); };
+  if (el('btnLogout')) el('btnLogout').addEventListener('click', lo);
+  if (el('btnLogoutM')) el('btnLogoutM').addEventListener('click', lo);
+  document.title = (opts.title ? opts.title + ' — ' : '') + APP_NAME;
+}
+
+/* ---------- التوجيه ---------- */
+var ROUTES = [];
+function route(pattern, handler, auth) { ROUTES.push({ re: new RegExp('^' + pattern.replace(/:(\w+)/g, '([^/]+)') + '$'), handler: handler, auth: auth }); }
+function go(hash) { if (location.hash === hash) render(); else location.hash = hash; }
+function render() {
+  var hash = location.hash || '#/home';
+  S.route = hash;
+  for (var i = 0; i < ROUTES.length; i++) {
+    var m = hash.match(ROUTES[i].re);
+    if (m) {
+      var r = ROUTES[i];
+      if (r.auth && !S.user) { store('next', hash); go('#/login'); return; }
+      if (r.auth === 'admin' && S.user.role !== 'admin') { toast('هذه الصفحة للإدارة فقط', 'warn'); go('#/home'); return; }
+      if (!r.auth && S.user && /^#\/(login|register|verify|forgot|reset|setup)/.test(hash)) { go('#/home'); return; }
+      try { r.handler.apply(null, m.slice(1).map(decodeURIComponent)); } catch (e) { console.error(e); layout(alertBox('err', 'حدث خطأ في عرض الصفحة.') + '<a class="btn" href="#/home">العودة للرئيسية</a>'); }
+      return;
+    }
+  }
+  go('#/home');
+}
+window.addEventListener('hashchange', render);
+window.addEventListener('online', function () { document.body.classList.remove('is-offline'); toast('عاد الاتصال بالإنترنت', 'ok'); });
+window.addEventListener('offline', function () { document.body.classList.add('is-offline'); });
+
+/* ---------- الهوية البصرية المخصصة (اختيارية) ---------- */
+function loadBranding(b) {
+  b = b || {};
+  var jobs = [];
+  ['header', 'footer'].forEach(function (k) {
+    var id = b[k + 'ImageId'];
+    if (!id) { S.branding[k] = ''; return; }
+    var cached = store('brand:' + k);
+    if (cached && cached.indexOf(id + '|') === 0) { S.branding[k] = cached.substr(id.length + 1); return; }
+    jobs.push(api('app.assets', { which: k }).then(function (r) { var d = r && r[k] && r[k].dataUrl; if (d) { S.branding[k] = d; store('brand:' + k, id + '|' + d); } }).catch(function () { }));
+  });
+  return Promise.all(jobs);
+}
+
+/* ---------- الإقلاع ---------- */
+function boot() {
+  if (!navigator.onLine) document.body.classList.add('is-offline');
+  S.token = store('token');
+  try { S.user = JSON.parse(store('user') || 'null'); } catch (e) { S.user = null; }
+  api('app.state').then(function (d) {
+    S.setup = d.setup; S.settings = d.settings;
+    return loadBranding(d.settings && d.settings.branding).then(function () {
+      if (d.setup.needsAdmin) { S.user = null; setSession(null, null); go('#/setup'); render(); return; }
+      if (S.token) {
+        return api('auth.me').then(function (me) { S.user = me.user; S.settings = me.settings; store('user', JSON.stringify(me.user)); var next = store('next'); if (next) { store('next', null); go(next); } render(); })
+          .catch(function () { setSession(null, null); render(); });
+      }
+      render();
+    });
+  }).catch(function (e) {
+    el('app').innerHTML = '<div class="page auth-wrap"><div class="card">' + alertBox('err', h(errMsg(e))) + '<button class="btn block" onclick="location.reload()">إعادة المحاولة</button></div></div>';
+  });
+}
+document.addEventListener('DOMContentLoaded', boot);
+</script>

@@ -1,0 +1,15 @@
+{
+  "name": "ikp-platform",
+  "version": "3.0.0",
+  "private": true,
+  "description": "منصة ابن خلدون للتدريب والتطوير المهني — Google Apps Script + Sheets",
+  "scripts": {
+    "assets": "node tools/make-assets.js",
+    "build": "node tools/build.js",
+    "test": "node --test tests/server.test.js",
+    "test:e2e": "node tests/e2e.js",
+    "dev": "node tests/dev-server.js",
+    "check": "node tools/check.js"
+  },
+  "license": "UNLICENSED"
+}

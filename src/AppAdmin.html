@@ -1,0 +1,333 @@
+<script>
+/* ============================================================
+   AppAdmin — لوحة الإدارة (الهيكل، النظرة العامة، الورش، المحرر، الذكاء الاصطناعي)
+   ============================================================ */
+var ADMIN_TABS = [['overview', 'نظرة عامة', '📊'], ['workshops', 'الورش', '📚'], ['results', 'المتدربون والنتائج', '👥'], ['certs', 'الشهادات', '🎓'], ['settings', 'الإعدادات', '⚙️'], ['logs', 'سجل العمليات', '🧾']];
+function adminShell(tab, inner, title) {
+  layout('<div class="admin-layout"><aside class="side" aria-label="أقسام الإدارة"><nav>' + ADMIN_TABS.map(function (t) { return '<a href="#/admin/' + t[0] + '" class="' + (tab === t[0] ? 'active' : '') + '"' + (tab === t[0] ? ' aria-current="page"' : '') + '><span class="ic" aria-hidden="true">' + t[2] + '</span>' + t[1] + '</a>'; }).join('') + '</nav></aside><section id="adminBody">' + inner + '</section></div>', { title: title || 'لوحة الإدارة' });
+}
+route('#/admin', function () { go('#/admin/overview'); }, 'admin');
+function subTabs(root, tabs, loaders) {
+  $$('.tabs button', root).forEach(function (b) { b.addEventListener('click', function () { $$('.tabs button', root).forEach(function (x) { x.classList.remove('active'); x.setAttribute('aria-selected', 'false'); }); b.classList.add('active'); b.setAttribute('aria-selected', 'true'); tabs.forEach(function (t) { var box = el(t[1]); box.style.display = b.dataset.t === t[0] ? '' : 'none'; if (b.dataset.t === t[0] && !box.innerHTML && loaders[t[0]]) loaders[t[0]](); }); }); });
+}
+
+/* ---------- نظرة عامة ---------- */
+function barList(items, labelKey, valKey, maxVal, cls) {
+  var max = maxVal || Math.max.apply(null, items.map(function (i) { return Number(i[valKey]) || 0; }).concat([1]));
+  return '<div class="bar-list">' + items.map(function (i) { var v = Number(i[valKey]) || 0; return '<div class="b"><span class="lbl" title="' + h(i[labelKey]) + '">' + h(i[labelKey]) + '</span><div class="track" role="img" aria-label="' + h(i[labelKey]) + ': ' + v + '"><span class="' + (cls || '') + '" style="width:' + Math.round(v / max * 100) + '%"></span></div><b>' + v + (cls === 'pct' ? '%' : '') + '</b></div>'; }).join('') + '</div>';
+}
+route('#/admin/overview', function () {
+  adminShell('overview', skeletonList(3), 'نظرة عامة');
+  api('admin.overview').then(function (d) {
+    var k = d.kpis;
+    var mailWarn = k.mailFailed + k.mailQueued;
+    el('adminBody').innerHTML = '<h1>نظرة عامة</h1><p class="sub">مؤشرات محسوبة من البيانات الفعلية للمنصة' + (d.mailQuota !== null && d.mailQuota !== undefined ? ' · حصة البريد المتبقية اليوم: <b>' + d.mailQuota + '</b>' : '') + '</p>' +
+      '<div class="grid c4">' +
+      '<div class="kpi"><div class="n">' + k.trainees + '</div><div class="l">متدرب نشط' + (k.pendingUsers ? ' <span class="chip warn">' + k.pendingUsers + ' بانتظار التفعيل</span>' : '') + (k.suspendedUsers ? ' <span class="chip err">' + k.suspendedUsers + ' موقوف</span>' : '') + '</div></div>' +
+      '<div class="kpi info"><div class="n">' + k.workshopsPublished + '</div><div class="l">ورشة منشورة · ' + k.workshopsDraft + ' مسودة · ' + k.workshopsUnpublished + ' غير منشورة · ' + k.workshopsArchived + ' مؤرشفة</div></div>' +
+      '<div class="kpi gold"><div class="n">' + k.participants + '</div><div class="l">مشارك (نسبة المشاركة ' + k.participationRate + '%)</div></div>' +
+      '<div class="kpi ok"><div class="n">' + k.passed + '</div><div class="l">اجتياز · نسبة الإكمال ' + k.completionRate + '%</div></div>' +
+      '<div class="kpi ok"><div class="n">' + k.certificates + '</div><div class="l">شهادة صادرة</div></div>' +
+      '<div class="kpi"><div class="n">' + k.attempts + '</div><div class="l">محاولة اختبار</div></div>' +
+      '<div class="kpi ' + (mailWarn ? 'err' : '') + '"><div class="n">' + k.mailFailed + '</div><div class="l">رسائل بريد متعذرة' + (k.mailQueued ? ' · ' + k.mailQueued + ' في الانتظار' : '') + (mailWarn ? ' <a href="#/admin/logs">معالجة</a>' : '') + '</div></div>' +
+      '<div class="kpi ' + (d.aiKey.configured ? 'ok' : '') + '"><div class="n" style="font-size:18px">' + (d.aiKey.configured ? 'مفعّل' : 'غير مضبوط') + '</div><div class="l">الذكاء الاصطناعي (Claude) · <a href="#/admin/settings">الإعدادات</a></div></div></div>' +
+      '<div class="grid c2" style="margin-top:18px;align-items:start">' +
+      '<div class="card"><h2>الورش: المشاركون والمجتازون</h2>' + (d.byWorkshop.length ? '<h3 style="font-size:14px;color:var(--muted)">بدأ الورشة</h3>' + barList(d.byWorkshop, 'title', 'started') + '<h3 style="font-size:14px;color:var(--muted);margin-top:12px">اجتاز</h3>' + barList(d.byWorkshop, 'title', 'passed', Math.max.apply(null, d.byWorkshop.map(function (w) { return w.started; }).concat([1])), 'gold') : emptyState('📭', 'لا توجد ورش منشورة')) + '</div>' +
+      '<div class="card"><h2>المقارنة بحسب الأقسام</h2>' + (d.byDepartment.length ? '<div class="table-wrap"><table class="tbl" style="min-width:0"><thead><tr><th>القسم</th><th>الكادر</th><th>مشارك</th><th>اجتاز</th><th>نسبة المشاركة</th></tr></thead><tbody>' + d.byDepartment.map(function (r) { var pr = r.staff ? Math.round(r.participants / r.staff * 100) : 0; return '<tr><td>' + h(r.department) + '</td><td>' + r.staff + '</td><td>' + r.participants + '</td><td>' + r.passed + '</td><td><div class="progress" style="min-width:80px" role="progressbar" aria-valuenow="' + pr + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + pr + '%"></span></div><small>' + pr + '%</small></td></tr>'; }).join('') + '</tbody></table></div>' : emptyState('👥', 'لا يوجد متدربون بعد')) + '</div></div>' +
+      '<div class="card" style="margin-top:16px"><div class="row between"><h2 style="margin:0">أحدث النتائج</h2><a class="btn sm soft" href="#/admin/results">كل النتائج والتقارير</a></div>' + (d.recent.length ? '<div class="table-wrap" style="margin-top:10px"><table class="tbl"><thead><tr><th>المتدرب</th><th>القسم</th><th>الورشة</th><th>الاختبار</th><th>النتيجة</th><th>التاريخ</th></tr></thead><tbody>' + d.recent.map(function (r) { return '<tr><td>' + h(r.name) + '</td><td>' + h(r.department) + '</td><td>' + h(r.workshop) + '</td><td>' + (r.kind === 'final' ? 'نهائي' : 'الوحدة ' + (r.moduleIndex + 1)) + '</td><td><b>' + pct(r.percent) + '</b> ' + (r.passed ? '<span class="chip ok">اجتاز</span>' : '<span class="chip err">لم يجتز</span>') + '</td><td>' + fmtDate(r.at, true) + '</td></tr>'; }).join('') + '</tbody></table></div>' : emptyState('📭', 'لا توجد نتائج بعد')) + '</div>';
+  }).catch(function (e) { el('adminBody').innerHTML = alertBox('err', h(errMsg(e))); });
+}, 'admin');
+
+/* ---------- قائمة الورش ---------- */
+route('#/admin/workshops', function () {
+  adminShell('workshops', skeletonList(3), 'الورش');
+  api('admin.ws.list').then(function (d) {
+    var rows = d.workshops.map(function (w) {
+      return '<tr><td><a href="#/admin/ws/' + h(w.id) + '"><b>' + h(w.title) + '</b></a><br><small style="color:var(--muted)">' + w.moduleCount + ' وحدات · ' + h(w.category || '') + (w.source === 'ai' ? ' · <span class="chip gold">مولّدة بالذكاء الاصطناعي</span>' : w.source === 'ai-manual' ? ' · <span class="chip gold">مستوردة JSON</span>' : '') + '</small></td><td>' + chipStatus(w.status) + '</td><td>' + (w.scheduledAt ? fmtDate(w.scheduledAt, true) : '—') + '</td><td>' + w.stats.started + ' / ' + w.stats.passed + '</td><td>' + fmtDate(w.updatedAt) + '</td><td><a class="btn sm ghost" href="#/admin/ws/' + h(w.id) + '">تحرير</a></td></tr>';
+    }).join('');
+    el('adminBody').innerHTML = '<div class="row between"><div><h1>الورش التدريبية</h1><p class="sub">إنشاء الورش وتحريرها ونشرها</p></div><div class="row"><button class="btn gold" id="btnAI" type="button">✨ توليد بالذكاء الاصطناعي</button><button class="btn" id="btnNew" type="button">＋ ورشة جديدة</button></div></div>' +
+      '<div class="card">' + (rows ? '<div class="table-wrap"><table class="tbl"><thead><tr><th>الورشة</th><th>الحالة</th><th>الموعد</th><th>بدأ / اجتاز</th><th>آخر تحديث</th><th><span class="sr-only">إجراءات</span></th></tr></thead><tbody>' + rows + '</tbody></table></div>' : emptyState('📚', 'لا توجد ورش بعد', 'ابدأ بإنشاء ورشة يدويًا أو بتوليدها بالذكاء الاصطناعي')) + '</div>';
+    el('btnNew').addEventListener('click', newWorkshopDlg);
+    el('btnAI').addEventListener('click', aiWizard);
+  }).catch(function (e) { el('adminBody').innerHTML = alertBox('err', h(errMsg(e))); });
+}, 'admin');
+
+function newWorkshopDlg() {
+  var m = modal({ title: 'ورشة جديدة', body: '<form id="fNewWs">' + field({ id: 'nwTitle', name: 'title', label: 'عنوان الورشة', required: true }) + field({ id: 'nwDesc', name: 'description', type: 'textarea', label: 'الوصف', rows: 3 }) +
+    '<div class="grid c2">' + field({ id: 'nwMods', name: 'moduleCount', type: 'number', label: 'عدد الوحدات (هيكل أولي)', value: 3, min: 1, max: 8 }) + field({ id: 'nwPass', name: 'passScore', type: 'number', label: 'نسبة النجاح %', value: S.settings.defaultPassScore, min: 1, max: 100 }) + '</div>' +
+    field({ id: 'nwOutline', name: 'outline', type: 'textarea', label: 'عناوين الوحدات (اختياري — افصل بينها بفاصلة أو سطر)', rows: 2 }) + '</form>',
+    footer: '<button class="btn" id="nwGo">إنشاء الهيكل وفتح المحرر</button><button class="btn ghost" data-close>إلغاء</button>' });
+  $('#nwGo', m.el).addEventListener('click', function () {
+    var d = formData($('#fNewWs', m.el)); if (!d.title || d.title.trim().length < 5) { setFieldErr('nwTitle', 'أدخل عنوان الورشة (5 أحرف على الأقل)'); return; }
+    var b = this; busyBtn(b, true);
+    api('admin.ws.skeleton', { topic: d.title, description: d.description, moduleCount: d.moduleCount, passScore: d.passScore, outline: d.outline })
+      .then(function (r) { return api('admin.ws.create', { title: d.title, description: d.description, passScore: d.passScore, content: r.content, source: 'manual' }); })
+      .then(function (r) { m.close(); toast('تم إنشاء الورشة كمسودة', 'ok'); go('#/admin/ws/' + r.workshop.id); }).catch(function (e) { showErr(e); busyBtn(b, false); });
+  });
+}
+
+/* ---------- محرر الورشة ---------- */
+var ED = null; // {workshop, content, versions}
+function edSectionHtml(mi, si, s) {
+  var types = [['text', 'نص'], ['list', 'قائمة'], ['steps', 'خطوات'], ['table', 'جدول'], ['example', 'مثال تطبيقي'], ['tip', 'نصيحة'], ['warning', 'تنبيه / أخطاء شائعة'], ['remember', 'نقاط للتذكر'], ['activity', 'نشاط تأملي']];
+  var isList = ['list', 'steps', 'remember'].indexOf(s.type) !== -1, isTable = s.type === 'table';
+  return '<div class="sec" data-mi="' + mi + '" data-si="' + si + '"><div class="row"><select class="sType" style="width:auto;min-height:38px" aria-label="نوع القسم">' + types.map(function (t) { return '<option value="' + t[0] + '"' + (s.type === t[0] ? ' selected' : '') + '>' + t[1] + '</option>'; }).join('') + '</select>' +
+    '<input type="text" class="sTitle" value="' + h(s.title || '') + '" placeholder="عنوان القسم" style="flex:1;min-height:38px" aria-label="عنوان القسم"><button class="btn sm soft sUp" type="button" title="أعلى" aria-label="نقل القسم لأعلى">↑</button><button class="btn sm soft sDown" type="button" title="أسفل" aria-label="نقل القسم لأسفل">↓</button><button class="btn sm danger sDel" type="button" aria-label="حذف القسم">✕</button></div>' +
+    (isTable ? '<textarea class="sRows" rows="4" placeholder="صف في كل سطر، والخلايا مفصولة بـ | — السطر الأول عناوين الأعمدة" style="margin-top:6px" aria-label="صفوف الجدول">' + h((s.rows || []).map(function (r) { return r.join(' | '); }).join('\n')) + '</textarea>'
+      : '<textarea class="sBody" rows="' + (s.type === 'text' ? 6 : 3) + '" placeholder="' + (isList ? 'نص تمهيدي (اختياري)' : 'المحتوى — افصل الفقرات بسطر فارغ، ويمكن استخدام **غامق**') + '" style="margin-top:6px" aria-label="نص القسم">' + h(s.body || '') + '</textarea>' +
+        (isList ? '<textarea class="sItems" rows="4" placeholder="عنصر في كل سطر" style="margin-top:6px" aria-label="عناصر القائمة">' + h((s.items || []).join('\n')) + '</textarea>' : '')) + '</div>';
+}
+function edQuestionHtml(scope, qi, q) {
+  return '<div class="qed" data-scope="' + scope + '" data-qi="' + qi + '"><div class="row"><b style="flex:1">السؤال ' + (qi + 1) + '</b><button class="btn sm danger qDel" type="button" aria-label="حذف السؤال ' + (qi + 1) + '">✕</button></div>' +
+    '<input type="text" class="qText" value="' + h(q.text || '') + '" placeholder="نص السؤال" style="margin:6px 0" aria-label="نص السؤال ' + (qi + 1) + '"><div class="opts">' + [0, 1, 2, 3].map(function (oi) { return '<label><input type="radio" name="ans_' + scope + '_' + qi + '" value="' + oi + '"' + (Number(q.answer) === oi ? ' checked' : '') + ' title="الإجابة الصحيحة" aria-label="الخيار ' + (oi + 1) + ' هو الإجابة الصحيحة"><input type="text" class="qOpt" value="' + h((q.options || [])[oi] || '') + '" placeholder="الخيار ' + (oi + 1) + '" aria-label="نص الخيار ' + (oi + 1) + '"></label>'; }).join('') + '</div>' +
+    '<div class="hint">حدّد الإجابة الصحيحة بالضغط على الدائرة بجوار الخيار.</div>' +
+    '<input type="text" class="qExp" value="' + h(q.explanation || '') + '" placeholder="توضيح الإجابة (يظهر في التغذية الراجعة)" style="margin-top:6px" aria-label="توضيح الإجابة"></div>';
+}
+function edModuleHtml(mi, m) {
+  return '<div class="mod" data-mi="' + mi + '"><div class="mh" role="button" tabindex="0" aria-expanded="false"><span class="num chip maroon">' + (mi + 1) + '</span><b style="flex:1" class="mTitleLbl">' + h(m.title || 'وحدة بلا عنوان') + '</b><button class="btn sm soft mUp" type="button" aria-label="نقل الوحدة لأعلى">↑</button><button class="btn sm soft mDown" type="button" aria-label="نقل الوحدة لأسفل">↓</button><button class="btn sm danger mDel" type="button" aria-label="حذف الوحدة">✕</button></div>' +
+    '<div class="mb"><div class="grid c2"><div class="field"><label for="mt' + mi + '">عنوان الوحدة</label><input id="mt' + mi + '" type="text" class="mTitle" value="' + h(m.title || '') + '"></div><div class="field"><label for="ms' + mi + '">ملخص الوحدة</label><input id="ms' + mi + '" type="text" class="mSummary" value="' + h(m.summary || '') + '"></div></div>' +
+    '<div class="field"><label for="mo' + mi + '">الأهداف السلوكية (هدف في كل سطر)</label><textarea id="mo' + mi + '" class="mObj" rows="3">' + h((m.objectives || []).join('\n')) + '</textarea></div>' +
+    '<h3>المحتوى</h3><div class="secs">' + (m.sections || []).map(function (s, si) { return edSectionHtml(mi, si, s); }).join('') + '</div><button class="btn sm soft addSec" type="button">＋ إضافة قسم</button>' +
+    '<h3 style="margin-top:14px">الموارد والروابط</h3><p class="hint">سطر لكل مورد بالصيغة: العنوان | الرابط | النوع (link أو video أو file). تُقبل روابط http/https فقط.</p><textarea class="mRes" rows="2" aria-label="الموارد">' + h((m.resources || []).map(function (r) { return (r.title || '') + ' | ' + r.url + ' | ' + (r.type || 'link'); }).join('\n')) + '</textarea>' +
+    '<h3 style="margin-top:14px">أسئلة الوحدة (' + (m.questions || []).length + ')</h3><div class="qs">' + (m.questions || []).map(function (q, qi) { return edQuestionHtml('m' + mi, qi, q); }).join('') + '</div><button class="btn sm soft addQ" type="button">＋ إضافة سؤال</button></div></div>';
+}
+/** قراءة محتوى المحرر من DOM إلى كائن */
+function edCollect() {
+  var root = el('edRoot');
+  var content = { objectives: el('wsObjectives').value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean), modules: [], finalQuiz: { questions: [] } };
+  var readQ = function (qel) { var opts = $$('.qOpt', qel).map(function (i) { return i.value; }); var a = $('input[type=radio]:checked', qel); return { text: $('.qText', qel).value, options: opts, answer: a ? parseInt(a.value, 10) : 0, explanation: $('.qExp', qel).value }; };
+  $$('.mod', root).forEach(function (mel) {
+    var m = { title: $('.mTitle', mel).value, summary: $('.mSummary', mel).value, objectives: $('.mObj', mel).value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean), sections: [], resources: [], questions: [] };
+    $$('.sec', mel).forEach(function (sel) {
+      var t = $('.sType', sel).value, s = { type: t, title: $('.sTitle', sel).value };
+      if (t === 'table') s.rows = $('.sRows', sel).value.split('\n').filter(function (r) { return r.trim(); }).map(function (r) { return r.split('|').map(function (c) { return c.trim(); }); });
+      else { s.body = $('.sBody', sel).value; var it = $('.sItems', sel); if (it) s.items = it.value.split('\n').map(function (x) { return x.trim(); }).filter(Boolean); }
+      m.sections.push(s);
+    });
+    $('.mRes', mel).value.split('\n').forEach(function (line) { var p = line.split('|').map(function (x) { return x.trim(); }); if (p.length >= 2 && p[1]) m.resources.push({ title: p[0], url: p[1], type: p[2] || 'link' }); });
+    $$('.qed', mel).forEach(function (q) { m.questions.push(readQ(q)); });
+    content.modules.push(m);
+  });
+  $$('#finalQs .qed', root).forEach(function (q) { content.finalQuiz.questions.push(readQ(q)); });
+  return content;
+}
+function edMeta() {
+  var f = el('fMeta'); var d = formData(f);
+  d.targetDepartments = $$('input[name=dept]:checked', f).map(function (i) { return i.value; });
+  if (d.scheduledAt) { var dt = new Date(d.scheduledAt); d.scheduledAt = isNaN(dt) ? '' : dt.toISOString(); }
+  return d;
+}
+function toLocalInput(iso) { if (!iso) return ''; var d = new Date(iso); if (isNaN(d)) return ''; var p = function (n) { return (n < 10 ? '0' : '') + n; }; return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()); }
+
+route('#/admin/ws/:id', function (id) {
+  adminShell('workshops', skeletonList(3), 'محرر الورشة');
+  api('admin.ws.get', { id: id }).then(function (d) {
+    ED = { workshop: d.workshop, content: d.content, versions: d.versions };
+    renderEditor();
+  }).catch(function (e) { el('adminBody').innerHTML = alertBox('err', h(errMsg(e))) + '<a class="btn" href="#/admin/workshops">العودة</a>'; });
+}, 'admin');
+
+function renderEditor() {
+  var w = ED.workshop, c = ED.content, st = S.settings;
+  var statusBtns = '';
+  if (w.status === 'draft' || w.status === 'unpublished') statusBtns = '<button class="btn ok" type="button" data-status="published">🚀 نشر الورشة</button>';
+  if (w.status === 'published') statusBtns = '<button class="btn soft" type="button" data-status="unpublished">إلغاء النشر</button><button class="btn soft" type="button" id="btnNotify">📧 إشعار الموظفين</button>' + (w.trainerEmail ? '<button class="btn soft" type="button" id="btnThank">🙏 شهادة شكر للمدرب</button>' : '');
+  if (w.status !== 'archived') statusBtns += '<button class="btn ghost" type="button" data-status="archived">أرشفة</button>'; else statusBtns += '<button class="btn soft" type="button" data-status="draft">إعادة تفعيل كمسودة</button><button class="btn danger" type="button" id="btnDelete">حذف نهائي</button>';
+  var versionsInfo = ED.versions.length ? '<details style="margin-top:8px"><summary>إصدارات المحتوى (' + ED.versions.length + ')</summary><ul class="hint">' + ED.versions.map(function (v) { return '<li>الإصدار ' + v.version + (v.current ? ' <span class="chip ok">الحالي</span>' : '') + ' — ' + fmtDate(v.createdAt, true) + ' — ' + v.attempts + ' محاولة مرتبطة</li>'; }).join('') + '</ul></details>' : '';
+  el('adminBody').innerHTML = '<div class="row between"><div><a href="#/admin/workshops" class="btn sm soft">← الورش</a> ' + chipStatus(w.status) + (w.notifiedAt ? ' <span class="chip">أُشعر الموظفون ' + fmtDate(w.notifiedAt) + '</span>' : '') + (w.trainerThankedAt ? ' <span class="chip ok">شُكر المدرب</span>' : '') + '</div><div class="row"><button class="btn ghost" type="button" id="btnValidate">✔ التحقق</button><button class="btn ghost" type="button" id="btnPreview">👁 معاينة</button><button class="btn ghost" type="button" id="btnJson">{ } JSON</button><button class="btn" type="button" id="btnSave">💾 حفظ</button></div></div>' +
+    '<div class="card" style="margin-top:12px"><h2>بيانات الورشة</h2><form id="fMeta" onsubmit="return false"><div class="grid c2">' +
+    field({ id: 'wTitle', name: 'title', label: 'العنوان', value: w.title, required: true }) + field({ id: 'wCat', name: 'category', label: 'المجال', value: w.category }) + '</div>' +
+    field({ id: 'wDesc', name: 'description', type: 'textarea', label: 'الوصف', value: w.description, rows: 3 }) +
+    '<div class="grid c3">' + field({ id: 'wAud', name: 'audience', label: 'الفئة المستهدفة', value: w.audience }) + field({ id: 'wPass', name: 'passScore', type: 'number', label: 'نسبة النجاح %', value: w.passScore, min: 1, max: 100 }) + field({ id: 'wDur', name: 'durationMin', type: 'number', label: 'المدة (دقيقة)', value: w.durationMin, min: 0 }) + '</div>' +
+    '<div class="grid c3">' + field({ id: 'wTrainer', name: 'trainerName', label: 'اسم المدرب', value: w.trainerName }) + field({ id: 'wTrainerEmail', name: 'trainerEmail', type: 'email', label: 'بريد المدرب (لشهادة الشكر)', value: w.trainerEmail }) + field({ id: 'wLoc', name: 'location', label: 'المكان', value: w.location }) + '</div>' +
+    field({ id: 'wWhen', name: 'scheduledAt', type: 'datetime-local', label: 'موعد الورشة (يُرسل للموظفين عند النشر)', value: toLocalInput(w.scheduledAt), cls: 'ltr' }) +
+    '<fieldset class="field" style="border:0;padding:0"><legend style="font-weight:700;font-size:14px">الأقسام المستهدفة (اتركها فارغة لجميع الأقسام)</legend><div class="row">' + st.departments.map(function (dp) { return '<label class="check"><input type="checkbox" name="dept" value="' + h(dp) + '"' + (w.targetDepartments.indexOf(dp) !== -1 ? ' checked' : '') + '> ' + h(dp) + '</label>'; }).join('') + '</div></fieldset>' +
+    '<div class="field"><label for="wsObjectives">أهداف الورشة العامة (هدف في كل سطر)</label><textarea id="wsObjectives" rows="4">' + h((c.objectives || []).join('\n')) + '</textarea></div></form></div>' +
+    '<div class="card editor" style="margin-top:12px" id="edRoot"><div class="row between"><h2 style="margin:0">الوحدات (' + c.modules.length + ')</h2><button class="btn sm soft" type="button" id="addMod">＋ إضافة وحدة</button></div><div id="mods" style="margin-top:10px">' + c.modules.map(function (m, i) { return edModuleHtml(i, m); }).join('') + '</div>' +
+    '<h2 style="margin-top:20px">الاختبار النهائي (' + c.finalQuiz.questions.length + ' أسئلة)</h2><p class="sub">يجب أن يغطي الوحدات ويتضمن أسئلة تطبيقية ولا يكرر أسئلة الوحدات حرفيًا.</p><div id="finalQs">' + c.finalQuiz.questions.map(function (q, qi) { return edQuestionHtml('f', qi, q); }).join('') + '</div><button class="btn sm soft" type="button" id="addFinalQ">＋ إضافة سؤال</button></div>' +
+    '<div class="card" style="margin-top:12px"><h2>الحالة والإجراءات</h2><div class="row">' + statusBtns + '</div><p class="hint" style="margin-top:8px">أي تعديل على ورشة منشورة أو لها محاولات يُحفظ كإصدار جديد ولا يغيّر نتائج المتدربين السابقة. الحذف النهائي يتطلب الأرشفة أولًا ويُبقي النتائج والشهادات.</p>' + versionsInfo + '</div>';
+  bindEditorEvents();
+}
+function bindEditorEvents() {
+  var root = el('edRoot');
+  root.addEventListener('click', function (e) {
+    var b = e.target.closest('button, .mh'); if (!b) return;
+    if (b.classList.contains('mh') && !e.target.closest('button')) { var mod = b.parentNode; mod.classList.toggle('open'); b.setAttribute('aria-expanded', mod.classList.contains('open')); return; }
+    e.preventDefault();
+    if (b.id === 'addMod') { syncEd(); ED.content.modules.push({ title: 'وحدة جديدة', objectives: [], sections: [{ type: 'text', title: 'مقدمة', body: '' }], resources: [], questions: [] }); renderEditor(); $$('.mod', el('edRoot')).pop().classList.add('open'); return; }
+    if (b.id === 'addFinalQ') { syncEd(); ED.content.finalQuiz.questions.push({ text: '', options: ['', '', '', ''], answer: 0, explanation: '' }); renderEditor(); el('finalQs').scrollIntoView(); return; }
+    var mel = b.closest('.mod'); var mi = mel ? parseInt(mel.dataset.mi, 10) : -1;
+    if (b.classList.contains('mDel')) { confirmDlg('حذف الوحدة', 'سيتم حذف الوحدة ومحتواها وأسئلتها من المحرر (يُطبق عند الحفظ).', 'حذف', true).then(function (ok) { if (ok) { syncEd(); ED.content.modules.splice(mi, 1); renderEditor(); } }); return; }
+    if (b.classList.contains('mUp') || b.classList.contains('mDown')) { syncEd(); var to = mi + (b.classList.contains('mUp') ? -1 : 1); if (to < 0 || to >= ED.content.modules.length) return; var t = ED.content.modules[mi]; ED.content.modules[mi] = ED.content.modules[to]; ED.content.modules[to] = t; renderEditor(); $$('.mod', el('edRoot'))[to].classList.add('open'); return; }
+    if (b.classList.contains('addSec')) { syncEd(); ED.content.modules[mi].sections.push({ type: 'text', title: '', body: '' }); renderEditor(); $$('.mod', el('edRoot'))[mi].classList.add('open'); return; }
+    if (b.classList.contains('addQ')) { syncEd(); ED.content.modules[mi].questions.push({ text: '', options: ['', '', '', ''], answer: 0, explanation: '' }); renderEditor(); $$('.mod', el('edRoot'))[mi].classList.add('open'); return; }
+    var sel = b.closest('.sec');
+    if (sel) { syncEd(); var si = parseInt(sel.dataset.si, 10), secs = ED.content.modules[mi].sections; if (b.classList.contains('sDel')) secs.splice(si, 1); else { var to2 = si + (b.classList.contains('sUp') ? -1 : 1); if (to2 < 0 || to2 >= secs.length) return; var t2 = secs[si]; secs[si] = secs[to2]; secs[to2] = t2; } renderEditor(); $$('.mod', el('edRoot'))[mi].classList.add('open'); return; }
+    var qel = b.closest('.qed');
+    if (qel && b.classList.contains('qDel')) { syncEd(); var qi = parseInt(qel.dataset.qi, 10); if (qel.dataset.scope === 'f') ED.content.finalQuiz.questions.splice(qi, 1); else ED.content.modules[mi].questions.splice(qi, 1); renderEditor(); if (mel) $$('.mod', el('edRoot'))[mi].classList.add('open'); return; }
+  });
+  root.addEventListener('keydown', function (e) { if (e.target.classList.contains('mh') && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.target.click(); } });
+  root.addEventListener('change', function (e) {
+    if (e.target.classList.contains('sType')) { syncEd(); renderEditor(); var mi = parseInt(e.target.closest('.mod').dataset.mi, 10); $$('.mod', el('edRoot'))[mi].classList.add('open'); }
+    if (e.target.classList.contains('mTitle')) { $('.mTitleLbl', e.target.closest('.mod')).textContent = e.target.value || 'وحدة بلا عنوان'; }
+  });
+  el('btnSave').addEventListener('click', function () { saveEditor(this); });
+  el('btnValidate').addEventListener('click', function () {
+    var b = this; busyBtn(b, true);
+    api('admin.ws.validate', { content: edCollect(), passScore: el('wPass').value }).then(function (r) {
+      modal({ title: 'نتيجة التحقق', body: r.issues.length ? alertBox('warn', 'يوجد ' + r.issues.length + ' ملاحظة يجب معالجتها قبل النشر:<ul>' + r.issues.map(function (i) { return '<li>' + h(i) + '</li>'; }).join('') + '</ul>') : alertBox('ok', 'المحتوى مكتمل والأسئلة صالحة. يمكن نشر الورشة.') });
+    }).catch(showErr).then(function () { busyBtn(b, false); });
+  });
+  el('btnPreview').addEventListener('click', function () { previewWorkshop(edCollect(), edMeta()); });
+  el('btnJson').addEventListener('click', jsonDlg);
+  $$('[data-status]', el('adminBody')).forEach(function (b) { b.addEventListener('click', function () { changeStatus(b.dataset.status, b); }); });
+  if (el('btnNotify')) el('btnNotify').addEventListener('click', function () {
+    var b = this; confirmDlg('إشعار الموظفين', 'سيتم إرسال دعوة بالبريد إلى الموظفين المعنيين (' + (ED.workshop.targetDepartments.length ? h(ED.workshop.targetDepartments.join('، ')) : 'جميع الأقسام') + ') بموعد الورشة. من سبق إشعارهم لن تصلهم رسالة مكررة. ما يتجاوز حد الدفعة يُوضع في قائمة الانتظار.', 'إرسال').then(function (ok) {
+      if (!ok) return; busyBtn(b, true, 'جارٍ الإرسال');
+      api('admin.ws.notify', { id: ED.workshop.id }).then(function (r) { toast('أُرسل: ' + r.sent + ' · متخطى (سبق إرساله): ' + r.skipped + ' · فشل: ' + r.failed + (r.queued ? ' · في الانتظار: ' + r.queued : ''), r.failed ? 'warn' : 'ok', 7000); }).catch(showErr).then(function () { busyBtn(b, false); });
+    });
+  });
+  if (el('btnThank')) el('btnThank').addEventListener('click', function () {
+    var b = this; busyBtn(b, true, 'جارٍ الإصدار');
+    api('admin.ws.thankTrainer', { id: ED.workshop.id }).then(function (r) { toast(r.resent ? 'أُعيد إرسال شهادة الشكر للمدرب' : (r.sent === false ? 'صدرت الشهادة لكن تعذر إرسال البريد: ' + (r.error || '') : 'أُصدرت شهادة الشكر وأُرسلت للمدرب'), r.sent === false ? 'warn' : 'ok', 5000); return api('admin.ws.get', { id: ED.workshop.id }); }).then(function (d) { if (d) { ED.workshop = d.workshop; renderEditor(); } }).catch(function (e) { showErr(e); busyBtn(b, false); });
+  });
+  if (el('btnDelete')) el('btnDelete').addEventListener('click', function () {
+    api('admin.ws.delete', { id: ED.workshop.id }).then(function (r) {
+      confirmDlg('حذف نهائي', 'سيتم حذف الورشة «' + h(r.title) + '» ومحتواها نهائيًا.<br>الأثر: ' + r.impact.attempts + ' محاولة مرتبطة بإصداراتها، ' + r.impact.progress + ' سجل تقدم سيُحذف. <b>تبقى ' + r.impact.results + ' نتيجة و' + r.impact.certificates + ' شهادة</b> محفوظة بنسخة بياناتها. لا يمكن التراجع.', 'حذف نهائيًا', true).then(function (ok) {
+        if (!ok) return; api('admin.ws.delete', { id: ED.workshop.id, confirm: true }).then(function () { toast('تم حذف الورشة', 'ok'); go('#/admin/workshops'); }).catch(showErr);
+      });
+    }).catch(showErr);
+  });
+}
+function syncEd() { ED.content = edCollect(); var meta = edMeta(); Object.assign(ED.workshop, meta, { targetDepartments: meta.targetDepartments }); }
+function saveEditorCore() {
+  var meta = edMeta(); meta.id = ED.workshop.id; meta.content = edCollect();
+  if (!meta.title || meta.title.trim().length < 3) { setFieldErr('wTitle', 'أدخل عنوان الورشة'); return Promise.reject({ code: 'VALIDATION', message: 'أدخل عنوان الورشة' }); }
+  return api('admin.ws.saveDraft', meta).then(function (r) { ED.workshop = r.workshop; ED.content = r.content; if (r.newVersion) toast('حُفظ المحتوى كإصدار جديد للحفاظ على نتائج المتدربين السابقة', 'info', 6000); return api('admin.ws.get', { id: ED.workshop.id }); }).then(function (d) { ED.versions = d.versions; });
+}
+function saveEditor(btn) {
+  busyBtn(btn, true, 'جارٍ الحفظ');
+  return saveEditorCore().then(function () { toast('تم الحفظ', 'ok'); renderEditor(); }).catch(function (e) { showErr(e); busyBtn(btn, false); });
+}
+function changeStatus(status, btn) {
+  var proceed = function () {
+    busyBtn(btn, true);
+    saveEditorCore().then(function () { return api('admin.ws.setStatus', { id: ED.workshop.id, status: status }); }).then(function (r) {
+      ED.workshop = r.workshop; renderEditor();
+      var msg = { published: 'تم نشر الورشة', unpublished: 'تم إلغاء النشر', archived: 'تمت أرشفة الورشة', draft: 'أُعيدت الورشة إلى المسودات' }[status];
+      if (r.notify && r.notify.sent !== undefined) msg += ' — أُرسلت الدعوة إلى ' + r.notify.sent + ' موظفًا' + (r.notify.failed ? ' (فشل ' + r.notify.failed + ')' : '') + (r.notify.queued ? ' (' + r.notify.queued + ' في الانتظار)' : '');
+      toast(msg, 'ok', 6000);
+    }).catch(function (e) {
+      if (e.code === 'INVALID_CONTENT') modal({ title: 'لا يمكن النشر', body: alertBox('warn', h(e.message) + '<ul>' + e.extra.issues.map(function (i) { return '<li>' + h(i) + '</li>'; }).join('') + '</ul>') });
+      else showErr(e);
+      busyBtn(btn, false);
+    });
+  };
+  if (status === 'published') confirmDlg('نشر الورشة', 'ستصبح الورشة متاحة للمتدربين' + (el('wWhen').value ? '، وسيُرسل إشعار بالموعد للموظفين المعنيين' : '') + '. هل راجعت المحتوى بشريًا؟', 'نشر').then(function (ok) { if (ok) proceed(); });
+  else if (status === 'archived') confirmDlg('أرشفة الورشة', 'ستختفي الورشة من قائمة المتدربين مع بقاء نتائجهم وشهاداتهم. يمكن إعادة تفعيلها لاحقًا.', 'أرشفة').then(function (ok) { if (ok) proceed(); });
+  else proceed();
+}
+function previewWorkshop(content, meta) {
+  var qBlock = function (q, qi) { return '<div class="q-card"><div class="qt">' + (qi + 1) + '. ' + h(q.text) + '</div>' + q.options.map(function (o, oi) { return '<div class="opt ' + (oi === q.answer ? 'correct' : '') + '" style="cursor:default">' + (oi === q.answer ? '✔ ' : '') + h(o) + '</div>'; }).join('') + (q.explanation ? '<div class="hint">التوضيح: ' + h(q.explanation) + '</div>' : '') + '</div>'; };
+  var body = '<div class="content"><h2>' + h(meta.title) + '</h2><p>' + h(meta.description) + '</p><h3>الأهداف</h3><ul>' + content.objectives.map(function (o) { return '<li>' + h(o) + '</li>'; }).join('') + '</ul>' +
+    content.modules.map(function (m, i) { return '<hr><h2>الوحدة ' + (i + 1) + ': ' + h(m.title) + '</h2>' + (m.summary ? '<p class="sub">' + h(m.summary) + '</p>' : '') + '<div class="callout tip"><div class="ct">🎯 الأهداف</div><ul>' + m.objectives.map(function (o) { return '<li>' + h(o) + '</li>'; }).join('') + '</ul></div>' + m.sections.map(renderSection).join('') + '<h3>أسئلة الوحدة</h3>' + m.questions.map(qBlock).join(''); }).join('') +
+    '<hr><h2>الاختبار النهائي</h2>' + content.finalQuiz.questions.map(qBlock).join('') + '</div>';
+  modal({ title: 'معاينة الورشة (الإجابات الصحيحة مظللة للمدير فقط)', body: body, wide: true });
+}
+function jsonDlg() {
+  var content = edCollect();
+  var m = modal({ title: 'JSON — خيار متقدم للاستيراد والتصدير', wide: true, body: '<p class="sub">يمكنك نسخ المحتوى أو لصق JSON لورشة كاملة (مثل ناتج Claude) لاستبدال محتوى المحرر بعد الفحص. يُحفظ بالضغط على «حفظ» في المحرر.</p><label for="jsonTa" class="sr-only">JSON</label><textarea id="jsonTa" rows="16" class="ltr" style="font-family:monospace;font-size:12.5px">' + h(JSON.stringify(content, null, 2)) + '</textarea><div id="jsonMsg"></div>',
+    footer: '<button class="btn" id="jsonApply">فحص وتطبيق على المحرر</button><button class="btn ghost" id="jsonDl">⬇ تنزيل</button><button class="btn ghost" id="jsonUp">⬆ رفع ملف</button><input type="file" id="jsonFile" accept=".json,application/json" class="sr-only" aria-label="ملف JSON"><button class="btn ghost" data-close>إغلاق</button>' });
+  $('#jsonDl', m.el).addEventListener('click', function () { downloadText('workshop-' + (ED.workshop.id) + '.json', $('#jsonTa', m.el).value, 'application/json'); });
+  $('#jsonUp', m.el).addEventListener('click', function () { $('#jsonFile', m.el).click(); });
+  $('#jsonFile', m.el).addEventListener('change', function () { var f = this.files[0]; if (!f) return; if (f.size > 4 * 1024 * 1024) { toast('الملف أكبر من 4MB', 'err'); return; } if (!/\.json$/i.test(f.name) && f.type && f.type !== 'application/json') { toast('اختر ملف JSON', 'err'); return; } readFileAsText(f).then(function (t) { $('#jsonTa', m.el).value = t; }); });
+  $('#jsonApply', m.el).addEventListener('click', function () {
+    var b = this, obj; try { obj = JSON.parse($('#jsonTa', m.el).value); } catch (e) { $('#jsonMsg', m.el).innerHTML = alertBox('err', 'JSON غير صالح: ' + h(e.message)); return; }
+    if (!obj || typeof obj !== 'object' || !Array.isArray(obj.modules)) { $('#jsonMsg', m.el).innerHTML = alertBox('err', 'يجب أن يحتوي JSON على قائمة modules.'); return; }
+    busyBtn(b, true);
+    api('admin.ws.validate', { content: obj, passScore: el('wPass').value }).then(function (r) {
+      ED.content = { objectives: obj.objectives || [], modules: obj.modules, finalQuiz: obj.finalQuiz || { questions: [] } };
+      if (obj.title) el('wTitle').value = obj.title; if (obj.description) el('wDesc').value = obj.description;
+      Object.assign(ED.workshop, edMeta()); renderEditor(); m.close();
+      toast(r.issues.length ? 'تم التطبيق مع ' + r.issues.length + ' ملاحظة — راجعها عبر زر التحقق ثم احفظ' : 'تم تطبيق JSON على المحرر — احفظ لتثبيت التغييرات', r.issues.length ? 'warn' : 'ok', 6000);
+    }).catch(function (e) { $('#jsonMsg', m.el).innerHTML = alertBox('err', h(errMsg(e))); busyBtn(b, false); });
+  });
+}
+
+/* ---------- معالج الذكاء الاصطناعي ---------- */
+var AI_STAGE_LABELS = { plan: 'إعداد خطة الورشة', final: 'توليد الاختبار النهائي', validate: 'التحقق من البنية والمحتوى', save: 'الحفظ كمسودة للمراجعة' };
+function stageLabel(s) { if (AI_STAGE_LABELS[s]) return AI_STAGE_LABELS[s]; var m = String(s || '').match(/module_(\d+)/); return m ? 'توليد الوحدة ' + m[1] + ' واختبارها' : (s === 'done' ? 'مكتملة' : s); }
+function aiWizard() {
+  var st = S.settings;
+  var inputs = function (prefix) {
+    return '<form id="' + prefix + 'Form" onsubmit="return false">' + field({ id: prefix + 'Topic', name: 'topic', label: 'موضوع الورشة', required: true, placeholder: 'مثال: استراتيجيات التعلم النشط في المرحلة الإعدادية' }) + field({ id: prefix + 'Desc', name: 'description', type: 'textarea', label: 'الوصف', rows: 2 }) +
+      '<div class="grid c3">' + field({ id: prefix + 'Aud', name: 'audience', label: 'الفئة المستهدفة', value: 'المعلمون والكادر المدرسي' }) + field({ id: prefix + 'N', name: 'moduleCount', type: 'number', label: 'عدد الوحدات', value: 4, min: 1, max: 8 }) + field({ id: prefix + 'Pass', name: 'passScore', type: 'number', label: 'نسبة النجاح %', value: st.defaultPassScore, min: 1, max: 100 }) + '</div>' +
+      field({ id: prefix + 'Outline', name: 'outline', type: 'textarea', label: 'المحاور المقترحة (اختياري — افصل بينها بفاصلة أو سطر)', rows: 2 }) + field({ id: prefix + 'Notes', name: 'notes', type: 'textarea', label: 'ملاحظات المشرف (اختياري)', rows: 2 }) + '</form>';
+  };
+  var m = modal({ title: '✨ توليد ورشة تدريبية', wide: true, dismissable: false, footer: false, body:
+    '<div class="tabs" role="tablist"><button class="active" data-t="auto" role="tab" aria-selected="true">توليد آلي (Claude API)</button><button data-t="manual" role="tab" aria-selected="false">مسار يدوي (نسخ الأمر ولصق JSON)</button><button data-t="skeleton" role="tab" aria-selected="false">هيكل أولي بدون ذكاء اصطناعي</button></div>' +
+    '<div id="tAuto">' + alertBox('info', 'يُنفذ التوليد على مراحل (الخطة ← الوحدات بالتتابع ← الاختبار النهائي ← التحقق ← الحفظ كمسودة). يمكنك الإلغاء وإعادة المحاولة والاستئناف من آخر مرحلة ناجحة دون فقد ما تم توليده. المراجعة البشرية شرط قبل النشر، ولا يُنشر أي محتوى مولَّد تلقائيًا.') + inputs('ai') + '<div id="aiJobBox"></div><div class="row"><button class="btn gold" id="aiStart" type="button">ابدأ التوليد</button><button class="btn ghost" id="aiJobs" type="button">المهام السابقة</button><button class="btn ghost" data-close>إغلاق</button></div></div>' +
+    '<div id="tManual" style="display:none">' + alertBox('info', 'لا يحتاج هذا المسار إلى مفتاح API: انسخ الأمر، الصقه في Claude، ثم الصق JSON الناتج هنا وافحصه قبل الحفظ كمسودة.') + inputs('mn') + '<div class="row"><button class="btn" id="mnPrompt" type="button">1) توليد الأمر ونسخه</button></div><pre class="code" id="mnPromptBox" style="display:none;margin-top:8px" tabindex="0"></pre>' +
+    '<div class="field" style="margin-top:12px"><label for="mnJson">2) الصق JSON الناتج</label><textarea id="mnJson" rows="8" class="ltr" style="font-family:monospace;font-size:12.5px"></textarea></div><div id="mnMsg"></div><div class="row"><button class="btn ghost" id="mnCheck" type="button">3) فحص JSON</button><button class="btn gold" id="mnImport" type="button" disabled>4) حفظ كمسودة</button><button class="btn ghost" data-close>إغلاق</button></div></div>' +
+    '<div id="tSkeleton" style="display:none">' + alertBox('info', 'ينشئ هيكلًا فارغًا بالوحدات والأقسام والأسئلة لتعبئته يدويًا في المحرر.') + inputs('sk') + '<div class="row"><button class="btn" id="skGo" type="button">إنشاء الهيكل وفتح المحرر</button><button class="btn ghost" data-close>إغلاق</button></div></div>' });
+  subTabs(m.el, [['auto', 'tAuto'], ['manual', 'tManual'], ['skeleton', 'tSkeleton']], {});
+  var running = false, currentJob = null;
+  function renderJob(job) {
+    currentJob = job;
+    var box = $('#aiJobBox', m.el);
+    var idx = job.stageIndex;
+    box.innerHTML = '<div class="card tight" style="margin:10px 0"><div class="row between"><b>' + (job.plan ? h(job.plan.title) : h(job.input.topic)) + '</b>' + chipStatus(job.status) + '</div>' +
+      '<div role="list">' + job.stages.map(function (s, i) { var cls = i < idx ? 'done' : (i === idx ? (job.status === 'failed' ? 'failed' : (job.status === 'running' && running ? 'running' : '')) : ''); return '<div class="stage ' + cls + '" role="listitem"><span class="dot" aria-hidden="true"></span><span style="flex:1">' + h(stageLabel(s)) + '</span>' + (i < idx ? '<span class="chip ok">تم</span>' : (i === idx && job.status === 'failed' ? '<span class="chip err">فشل</span>' : (i === idx && job.status === 'running' && running ? '<span class="chip warn">جارٍ</span>' : ''))) + '</div>'; }).join('') + '</div>' +
+      (job.error ? alertBox('err', h(job.error)) : '') +
+      (job.warnings.length ? alertBox('warn', job.warnings.map(h).join('<br>')) : '') +
+      (job.usage && job.usage.calls ? '<p class="hint">استدعاءات: ' + job.usage.calls + ' · رموز الإدخال ' + job.usage.input + ' · رموز الإخراج ' + job.usage.output + '</p>' : '') +
+      '<details style="margin-top:6px"><summary>سجل المراحل (' + job.log.length + ')</summary><pre class="code" style="direction:rtl;text-align:right">' + job.log.map(h).join('\n') + '</pre></details>' +
+      '<div class="row" style="margin-top:8px">' + (job.status === 'done' ? '<a class="btn ok" href="#/admin/ws/' + h(job.workshopId) + '">فتح المسودة للمراجعة</a>' : '') + (job.status === 'failed' || job.status === 'cancelled' ? '<button class="btn gold" id="aiResume" type="button">إعادة المحاولة / استئناف من آخر مرحلة ناجحة</button>' : '') + (job.status === 'running' && running ? '<button class="btn danger" id="aiCancel" type="button">إلغاء</button>' : (job.status === 'running' ? '<button class="btn gold" id="aiResume" type="button">استئناف</button>' : '')) + '</div></div>';
+    if ($('#aiResume', box)) $('#aiResume', box).addEventListener('click', function () { runLoop(job.id); });
+    if ($('#aiCancel', box)) $('#aiCancel', box).addEventListener('click', function () { running = false; api('admin.ai.cancel', { jobId: job.id }).then(function (r) { renderJob(r.job); }).catch(showErr); });
+    if (job.status === 'done') $$('a[href^="#/admin/ws/"]', box).forEach(function (a) { a.addEventListener('click', function () { m.close(); }); });
+  }
+  function runLoop(jobId) {
+    running = true;
+    var step = function () {
+      if (!running) return;
+      api('admin.ai.step', { jobId: jobId }).then(function (r) { renderJob(r.job); if (r.job.status === 'running' && running) setTimeout(step, 400); else running = false; if (r.job.status === 'done') toast('اكتمل التوليد وحُفظت الورشة كمسودة', 'ok'); })
+        .catch(function (e) { running = false; showErr(e); if (currentJob) renderJob(currentJob); });
+    };
+    step();
+  }
+  $('#aiStart', m.el).addEventListener('click', function () {
+    var d = formData($('#aiForm', m.el)); if (!d.topic || d.topic.trim().length < 5) { setFieldErr('aiTopic', 'أدخل موضوع الورشة (5 أحرف على الأقل)'); return; }
+    var b = this; busyBtn(b, true);
+    api('admin.ai.start', d).then(function (r) { busyBtn(b, false); renderJob(r.job); runLoop(r.job.id); }).catch(function (e) { busyBtn(b, false); showErr(e); });
+  });
+  $('#aiJobs', m.el).addEventListener('click', function () {
+    api('admin.ai.list').then(function (r) {
+      var box = $('#aiJobBox', m.el);
+      box.innerHTML = r.jobs.length ? '<div class="table-wrap"><table class="tbl" style="min-width:0"><thead><tr><th>الموضوع</th><th>الحالة</th><th>المرحلة</th><th>التاريخ</th><th><span class="sr-only">فتح</span></th></tr></thead><tbody>' + r.jobs.map(function (j) { return '<tr><td>' + h(j.plan ? j.plan.title : j.input.topic) + '</td><td>' + chipStatus(j.status) + '</td><td>' + h(stageLabel(j.stage)) + '</td><td>' + fmtDate(j.createdAt, true) + '</td><td><button class="btn sm soft" type="button" data-job="' + h(j.id) + '">فتح</button></td></tr>'; }).join('') + '</tbody></table></div>' : emptyState('📭', 'لا توجد مهام سابقة');
+      $$('[data-job]', box).forEach(function (b) { b.addEventListener('click', function () { api('admin.ai.get', { jobId: b.dataset.job }).then(function (rr) { renderJob(rr.job); }).catch(showErr); }); });
+    }).catch(showErr);
+  });
+  $('#mnPrompt', m.el).addEventListener('click', function () {
+    var d = formData($('#mnForm', m.el)); if (!d.topic || d.topic.trim().length < 5) { setFieldErr('mnTopic', 'أدخل موضوع الورشة'); return; }
+    api('admin.ai.prompt', d).then(function (r) { var box = $('#mnPromptBox', m.el); box.style.display = ''; box.textContent = r.prompt; box.style.direction = 'rtl'; box.style.textAlign = 'right'; if (navigator.clipboard) navigator.clipboard.writeText(r.prompt).then(function () { toast('تم نسخ الأمر إلى الحافظة', 'ok'); }).catch(function () { toast('انسخ الأمر من المربع أدناه', 'info'); }); }).catch(showErr);
+  });
+  $('#mnCheck', m.el).addEventListener('click', function () {
+    var d = formData($('#mnForm', m.el)); var b = this; busyBtn(b, true);
+    api('admin.ai.importJson', { json: $('#mnJson', m.el).value, passScore: d.passScore, dryRun: true }).then(function (r) {
+      $('#mnImport', m.el).disabled = false;
+      $('#mnMsg', m.el).innerHTML = alertBox(r.issues.length ? 'warn' : 'ok', '«' + h(r.summary.title) + '» — ' + r.summary.modules + ' وحدات (' + r.summary.words.join('، ') + ' كلمة) · ' + r.summary.finalQuestions + ' أسئلة نهائية.' + (r.issues.length ? '<br>ملاحظات (يمكن الحفظ كمسودة ومعالجتها في المحرر):<ul>' + r.issues.map(function (i) { return '<li>' + h(i) + '</li>'; }).join('') + '</ul>' : ' JSON صالح.'));
+    }).catch(function (e) { $('#mnImport', m.el).disabled = true; $('#mnMsg', m.el).innerHTML = alertBox('err', h(errMsg(e))); }).then(function () { busyBtn(b, false); });
+  });
+  $('#mnImport', m.el).addEventListener('click', function () {
+    var d = formData($('#mnForm', m.el)); var b = this; busyBtn(b, true);
+    api('admin.ai.importJson', { json: $('#mnJson', m.el).value, passScore: d.passScore, audience: d.audience }).then(function (r) { m.close(); toast('تم حفظ الورشة كمسودة للمراجعة', 'ok'); go('#/admin/ws/' + r.workshop.id); }).catch(function (e) { showErr(e); busyBtn(b, false); });
+  });
+  $('#skGo', m.el).addEventListener('click', function () {
+    var d = formData($('#skForm', m.el)); if (!d.topic || d.topic.trim().length < 5) { setFieldErr('skTopic', 'أدخل موضوع الورشة'); return; }
+    var b = this; busyBtn(b, true);
+    api('admin.ws.skeleton', d).then(function (r) { return api('admin.ws.create', { title: d.topic, description: d.description, audience: d.audience, passScore: d.passScore, content: r.content, source: 'manual' }); })
+      .then(function (r) { m.close(); toast('تم إنشاء الهيكل كمسودة', 'ok'); go('#/admin/ws/' + r.workshop.id); }).catch(function (e) { showErr(e); busyBtn(b, false); });
+  });
+}
+</script>
